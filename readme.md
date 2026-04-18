@@ -4,7 +4,7 @@
 
 # Fooocus 2025 — Custom Fork
 
-> A personal fork of **[lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5** with two quality-of-life features: a one-click **Save Preset** button and a **CivitAI Model Settings** integration that pulls community-recommended generation settings directly into the UI.
+> A personal fork of **[lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5** with a series of quality-of-life features: a **Save Preset** button, **CivitAI Model Settings** integration (checkpoint triggers, consensus settings, save-as-preset), **LoRA trigger words** from local metadata + CivitAI, **Embeddings panel** with bulk-insert, **Wildcards editor**, **Vary-with-aspect-ratio** override, and a real **Restart UI** button.
 
 **Original project:** [github.com/lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) · **Original Windows package (v2.5.0):** [Fooocus_win64_2-5-0.7z](https://github.com/lllyasviel/Fooocus/releases/download/v2.5.0/Fooocus_win64_2-5-0.7z)
 
@@ -53,45 +53,92 @@ CivitAI responses are cached in `civitai_cache/<lora_name>.lora.civitai.json` (g
 ### 3. 🧩 Textual Inversion / Embeddings panel
 **Where:** Advanced tab, right below the LoRA section.
 
-**What it does:** Gives embeddings a proper UI instead of the hidden `(embedding:filename:weight)` syntax that most users never discover. 3 slots by default, each with a dropdown of available embeddings from `models/embeddings/`, a weight slider, and two buttons to inject the activation token into either the positive or negative prompt (embeddings are often negative-prompt tools — `BadHands`, `FastNegativeV2`, `unaestheticXL`, etc.).
+**What it does:** Gives embeddings a proper UI instead of the hidden `(embedding:filename:weight)` syntax that most users never discover. **5 slots** (matching LoRA), each with a dropdown of available embeddings from `models/embeddings/`, a weight slider, and two buttons to inject the activation token into either the positive or negative prompt (embeddings are often negative-prompt tools — `BadHands`, `FastNegativeV2`, `unaestheticXL`, etc.).
 
 **How to use:**
 1. Select an embedding in any slot. Its activation token appears in the read-only field below the row (auto-detected — the filename stem, plus any extra tokens from safetensors metadata or CivitAI).
 2. Set a weight (default 1.0).
-3. Click **📋 To prompt** or **📋 To negative** — the token `(embedding:<name>:<weight>)` is appended to the chosen textbox, de-duplicated.
-4. Or fill multiple slots and use **📋 Insert ALL active embeddings to prompt / negative** to inject all enabled ones at once.
+3. Click **📋 Prompt** or **📋 Negative** — the token `(embedding:<name>:<weight>)` is appended to the chosen textbox, **followed by any extra CivitAI/metadata trigger words** that aren't the filename itself. All deduped against what's already there.
+4. Or fill multiple slots and use **📋 Insert ALL active embeddings to prompt / negative** to inject all *included* slots at once.
+
+The **Include** checkbox per slot only filters the Insert-ALL bulk button — embeddings activate purely from their token being in the text, not from any enable flag. The per-slot buttons always work regardless of the checkbox.
 
 Uses the same local-metadata + CivitAI merged-triggers pipeline as the LoRA feature (`fetch_model_triggers_combined(kind='embedding')`). Cache: `civitai_cache/<name>.embedding.civitai.json`.
 
 ---
 
-### 4. 🎲 Wildcards panel
+### 4. 🎲 Wildcards editor
 **Where:** Advanced tab, below the Embeddings section (collapsible accordion).
 
-**What it does:** Gives Fooocus's built-in wildcards a UI. Instead of remembering filenames and typing `__name__` by hand, you pick a wildcard file from a dropdown, preview its first 30 lines, and one-click insert the `__token__` into the positive prompt.
+**What it does:** Gives Fooocus's built-in wildcards a full UI with an inline editor. Browse every `.txt` in your wildcards folder, edit the entries directly, save changes, create new wildcard files — all without leaving Fooocus.
 
 **How to use:**
 1. Open Advanced → 🎲 Wildcards.
 2. Pick a file from the dropdown (lists every `.txt` in your wildcards folder, e.g., `animal`, `artist-anime`, `adj-general`).
-3. Preview appears below (first 30 lines, with a "… and N more" marker for long files).
-4. Click **📋 Insert __token__ to prompt** — the corresponding `__<filename>__` token is appended to the positive prompt, de-duplicated.
-5. Generate — Fooocus expands each occurrence of the token to a random line from the file at generation time.
+3. The contents load into a scrollable editable text area (one entry per line).
+4. **Edit** entries directly in the text area, then click **💾 Save** to overwrite the file.
+5. To create a new wildcard: type a name in the new-name field, put the lines you want in the editor, click **➕ Create new** — a new `.txt` is written to the wildcards folder and the dropdown refreshes.
+6. Click **📋 Insert __token__ to prompt** — the corresponding `__<filename>__` token is appended to the positive prompt, de-duplicated.
+7. Generate — Fooocus expands each occurrence of the token to a random line from the file at generation time.
+
+Filenames are sanitised (letters/digits/underscore/dash only). Create rejects collisions.
 
 ---
 
 ### 5. 🎨 CivitAI Model Settings integration
-**Where:** new panel in the main UI, visible when a checkpoint is selected.
+**Where:** Advanced tab → CivitAI accordion (collapsible, next to Refiner).
 
-**What it does:** Queries [CivitAI](https://civitai.com/) for the currently selected model, aggregates the generation settings used in the **top-rated community images** for that model, and shows a consensus view (most-used **sampler**, **CFG scale**, **steps**, **clip skip**). One click applies those settings to the Fooocus UI, so you're always generating with the parameters the community has already validated.
+**What it does:** Queries [CivitAI](https://civitai.com/) for the currently selected checkpoint, aggregates the generation settings used in the **top-rated community images** for that model, and shows a consensus view (most-used **sampler**, **CFG scale**, **steps**, **clip skip**). Also surfaces the checkpoint's **trigger words** (`trainedWords` — e.g. `score_9, score_8_up, …` for Pony models) and lets you save the whole consensus as a reusable preset.
 
 **How to use:**
 1. **One-time setup:** paste your CivitAI API key into the field in the CivitAI panel — it is saved to `config.txt` for future sessions. Get a key at [civitai.com/user/account](https://civitai.com/user/account) (API Keys section).
-2. Select any model in the checkpoint dropdown.
-3. The panel fetches and displays the community consensus (cached locally in `civitai_cache/` to avoid repeat API calls).
-4. Click **Apply** to inject the recommended sampler / CFG / steps / clip-skip values into the Advanced tab.
-5. Generate.
+2. Select any checkpoint in the model dropdown.
+3. Expand the CivitAI accordion and click **🔍 Fetch CivitAI Settings**. First fetch for a new file runs a hash → CivitAI lookup; subsequent fetches are instant from the local cache (`civitai_cache/<name>.civitai.json`).
+4. The panel displays:
+   - **Triggers block** (if CivitAI lists any) — the checkpoint's `trainedWords`.
+   - **Consensus settings table** — sampler (CivitAI name + Fooocus-mapped name), CFG scale (median + range), steps (median + range), clip skip, and the top resolution.
+5. Click **✅ Apply These Settings** to inject sampler/CFG/steps/clip-skip into the Advanced tab.
+6. Click **📋 Copy checkpoint triggers to prompt** (appears only when triggers exist) to append them, deduped.
+7. Click **💾 Save CivitAI consensus as preset** to write a new preset `.json` combining:
+   - the CivitAI consensus sampler/scheduler/CFG/steps/clip-skip,
+   - the current base model, prompts, styles, aspect ratio, LoRAs, and embeddings.
+   - Default preset name auto-suggested as `civitai_<ModelName>`; editable.
 
-**Why it's useful:** every SDXL checkpoint has its own "sweet spot" parameters, and the uploader's page rarely lists them clearly. This reads them directly from what actually worked for the highest-rated outputs on CivitAI.
+**Why it's useful:** every SDXL checkpoint has its own "sweet spot" parameters, and the uploader's page rarely lists them clearly. This reads them directly from what actually worked for the highest-rated outputs on CivitAI — and composes with your LoRA/embedding setup to produce a ready-to-reuse preset in one click.
+
+---
+
+### 6. 📐 Use Aspect Ratio for Vary
+**Where:** Advanced tab → Aspect Ratios accordion (below the aspect-ratio grid).
+
+**What it does:** Forces Vary (Subtle) and Vary (Strong) outputs to use the selected Aspect Ratios dimensions instead of the input image's native shape. The input image is centre-cropped and resized to fit (not stretched). Upstream Fooocus always uses the input image's aspect for Vary/Upscale — this checkbox is the toggle for when you want to re-frame.
+
+**How to use:**
+1. Enable **☑ Advanced** mode.
+2. Expand the **Aspect Ratios** accordion.
+3. Pick the output aspect you want (e.g., `1152×896`).
+4. Tick **Use selected Aspect Ratio for Vary (crop input to fit)**.
+5. Load a source image into the Vary tab, pick Vary (Subtle) or Vary (Strong), Generate.
+
+Unchecked → original upstream behaviour (preserves input's native aspect). Does **not** affect Upscale (which keeps its fixed 1.5x / 2x factor).
+
+---
+
+### 7. 🔄 Restart UI button
+**Where:** bottom of the Advanced tab, next to **Refresh All Files**.
+
+**What it does:** Exits the Python process with code `42`. The included `.bat` launchers detect that exit code and relaunch automatically — a real restart (re-reads `config.txt`, re-imports modules, re-loads the model). Takes ~30 s on an RTX 5090; refresh the browser tab once the Gradio server is back.
+
+**Setup for your launcher:** wrap your launch command in a `:fooocus_start` loop that checks `%ERRORLEVEL% EQU 42`:
+
+```bat
+:fooocus_start
+.\python_embeded\Scripts\python.exe -s Fooocus\entry_with_update.py
+if %ERRORLEVEL% EQU 42 goto fooocus_start
+pause
+```
+
+Without this loop, the restart button still works — it just becomes a clean exit instead of a restart.
 
 ---
 

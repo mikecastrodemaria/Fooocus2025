@@ -588,6 +588,13 @@ with shared.gradio_root:
                     aspect_ratios_selection.change(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, _js='(x)=>{refresh_aspect_ratios_label(x);}')
                     shared.gradio_root.load(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, _js='(x)=>{refresh_aspect_ratios_label(x);}')
 
+                    use_aspect_for_vary = gr.Checkbox(
+                        label='Use selected Aspect Ratio for Vary (crop input to fit)',
+                        value=False,
+                        info='When enabled, Vary (Subtle/Strong) outputs use the Aspect Ratio above instead '
+                             'of the input image\u2019s native size. The input is centre-cropped and resized to fit. '
+                             'Does not affect Upscale (which keeps its fixed factor).')
+
                 image_number = gr.Slider(label='Image Number', minimum=1, maximum=modules.config.default_max_image_number, step=1, value=modules.config.default_image_number)
 
                 output_format = gr.Radio(label='Output Format',
@@ -1896,6 +1903,7 @@ with shared.gradio_root:
         ctrls += [sampler_name, scheduler_name, vae_name]
         ctrls += [overwrite_step, overwrite_switch, overwrite_width, overwrite_height, overwrite_vary_strength]
         ctrls += [overwrite_upscale_strength, mixing_image_prompt_and_vary_upscale, mixing_image_prompt_and_inpaint]
+        ctrls += [use_aspect_for_vary]  # custom-6: force aspect-ratio for Vary/Upscale
         ctrls += [debugging_cn_preprocessor, skipping_cn_preprocessor, canny_low_threshold, canny_high_threshold]
         ctrls += [refiner_swap_method, controlnet_softness]
         ctrls += freeu_ctrls

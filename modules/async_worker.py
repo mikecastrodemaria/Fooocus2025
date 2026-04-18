@@ -76,6 +76,7 @@ class AsyncTask:
         self.overwrite_upscale_strength = args.pop()
         self.mixing_image_prompt_and_vary_upscale = args.pop()
         self.mixing_image_prompt_and_inpaint = args.pop()
+        self.use_aspect_for_vary = args.pop()  # custom-6: force Aspect Ratios for Vary/Upscale
         self.debugging_cn_preprocessor = args.pop()
         self.skipping_cn_preprocessor = args.pop()
         self.canny_low_threshold = args.pop()
@@ -451,14 +452,30 @@ def worker():
             denoising_strength = 0.85
         if async_task.overwrite_vary_strength > 0:
             denoising_strength = async_task.overwrite_vary_strength
-        shape_ceil = get_image_shape_ceil(uov_input_image)
-        if shape_ceil < 1024:
-            print(f'[Vary] Image is resized because it is too small.')
-            shape_ceil = 1024
-        elif shape_ceil > 2048:
-            print(f'[Vary] Image is resized because it is too big.')
-            shape_ceil = 2048
-        uov_input_image = set_image_shape_ceil(uov_input_image, shape_ceil)
+        # custom-6: force Vary output to the selected Aspect Ratio dimensions
+        if getattr(async_task, 'use_aspect_for_vary', False):
+            try:
+                parts = str(async_task.aspect_ratios_selection).replace('\u00d7', ' ').split()
+                target_w, target_h = int(parts[0]), int(parts[1])
+            except Exception as e:
+                print(f'[Vary] use_aspect_for_vary: could not parse "{async_task.aspect_ratios_selection}" ({e}); falling back to shape-ceil.')
+                target_w, target_h = 0, 0
+            if target_w > 0 and target_h > 0:
+                print(f'[Vary] Forcing aspect ratio {target_w}x{target_h} from Aspect Ratios selection (centre-crop).')
+                uov_input_image = resize_image(uov_input_image, target_w, target_h, resize_mode=1)
+            else:
+                shape_ceil = get_image_shape_ceil(uov_input_image)
+                shape_ceil = max(1024, min(2048, shape_ceil))
+                uov_input_image = set_image_shape_ceil(uov_input_image, shape_ceil)
+        else:
+            shape_ceil = get_image_shape_ceil(uov_input_image)
+            if shape_ceil < 1024:
+                print(f'[Vary] Image is resized because it is too small.')
+                shape_ceil = 1024
+            elif shape_ceil > 2048:
+                print(f'[Vary] Image is resized because it is too big.')
+                shape_ceil = 2048
+            uov_input_image = set_image_shape_ceil(uov_input_image, shape_ceil)
         initial_pixels = core.numpy_to_pytorch(uov_input_image)
         if advance_progress:
             current_progress += 1

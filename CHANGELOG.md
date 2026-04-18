@@ -3,6 +3,13 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-6] — 2026-04-18
+### Added
+- **"Use selected Aspect Ratio for Vary" checkbox** under the Aspect Ratios accordion in the Advanced tab. When enabled, Vary (Subtle) and Vary (Strong) resize the input image to the selected aspect ratio's dimensions (centre-crop, `resize_mode=1`) before encoding, instead of following the input image's native shape-ceil. Unchecked = original upstream behavior. Does not affect Upscale (which keeps its fixed 1.5x/2x factor).
+
+### Changed
+- `modules/async_worker.py::AsyncTask` now consumes a new `use_aspect_for_vary` flag. The control is appended to `ctrls` right after `mixing_image_prompt_and_inpaint` and popped in the matching order.
+
 ## [custom-5] — 2026-04-18
 ### Added
 - **Checkpoint trigger words** in the CivitAI panel. The fetch result now also surfaces the checkpoint's `trainedWords` (score_9 for Pony, NSFW-style activation tokens for some merges, etc.) in a highlighted block above the settings table. A **📋 Copy checkpoint triggers to prompt** button appears under the panel when triggers are available.
