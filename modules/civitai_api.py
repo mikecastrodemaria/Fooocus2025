@@ -164,17 +164,20 @@ def get_model_version_by_hash(file_hash, api_key=None):
     """Look up a model version on CivitAI by SHA256 hash.
 
     Returns:
-        dict with modelId, modelVersionId, modelName, versionName or None
+        dict with modelId, modelVersionId, modelName, versionName, baseModel,
+        trainedWords (list), or None on miss.
     """
     # CivitAI expects uppercase hash, first 10 chars is enough but full is better
     data = _api_request(f'/model-versions/by-hash/{file_hash}', api_key=api_key)
     if data and 'id' in data:
+        triggers = [str(w).strip() for w in (data.get('trainedWords') or []) if str(w).strip()]
         return {
             'modelId': data.get('modelId'),
             'modelVersionId': data.get('id'),
             'modelName': data.get('model', {}).get('name', 'Unknown'),
             'versionName': data.get('name', 'Unknown'),
             'baseModel': data.get('baseModel', 'Unknown'),
+            'trainedWords': triggers,
         }
     return None
 
@@ -416,6 +419,18 @@ def format_settings_html(result):
         cache_badge = (' <span style="background:#2a4a3a;color:#6fcf97;padding:2px 8px;'
                        'border-radius:4px;font-size:11px;margin-left:8px;">cached</span>')
 
+    trained_words = model_info.get('trainedWords') or []
+    triggers_block = ''
+    if trained_words:
+        joined = ', '.join(trained_words)
+        triggers_block = (
+            f'<div style="margin:6px 0 10px 0;padding:6px 8px;background:#13302c;'
+            f'border-left:3px solid #4ecdc4;border-radius:4px;font-size:13px;">'
+            f'<b style="color:#4ecdc4;">Triggers:</b> '
+            f'<span style="color:#ddd;">{joined}</span>'
+            f'</div>'
+        )
+
     rows = []
 
     # Sampler
@@ -460,6 +475,7 @@ def format_settings_html(result):
     <b style="color:#4ecdc4;font-size:14px;">CivitAI Community Settings</b>{cache_badge}<br/>
     <span style="color:#aaa;">{model_name} ({version_name}) [{base_model}] &mdash; {total} images analyzed</span>
   </div>
+  {triggers_block}
   <table style="width:100%;border-collapse:collapse;font-size:13px;">
     <tr style="border-bottom:1px solid #333;">
       <th style="text-align:left;padding:4px;color:#888;">Setting</th>

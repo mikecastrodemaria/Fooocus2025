@@ -719,6 +719,22 @@ with shared.gradio_root:
 
                     # Hidden state to store raw settings for the Apply button
                     civitai_settings_state = gr.State(value=None)
+                    # Hidden state to store triggers + model_info for the Copy/Save buttons
+                    civitai_model_info_state = gr.State(value=None)
+
+                    with gr.Row():
+                        civitai_copy_triggers_btn = gr.Button(
+                            value='\U0001F4CB Copy checkpoint triggers to prompt',
+                            variant='secondary', scale=3, visible=False)
+                    with gr.Row():
+                        civitai_preset_name = gr.Textbox(
+                            show_label=False,
+                            placeholder='Preset name for CivitAI consensus (e.g. civitai_<modelname>)',
+                            value='', scale=3, container=False, visible=False)
+                        civitai_save_preset_btn = gr.Button(
+                            value='\U0001F4BE Save CivitAI consensus as preset',
+                            variant='primary', scale=2, visible=False)
+                    civitai_save_preset_status = gr.HTML(value='', visible=False)
 
                 with gr.Accordion(label='\U0001F9EC LoRA', open=True):
                     lora_ctrls = []
@@ -1232,16 +1248,21 @@ with shared.gradio_root:
                 )
 
                 def civitai_fetch_settings(model_name, api_key_field, force_refresh=False):
+                    empty = (
+                        gr.update(value='<div style="padding:8px;border:1px solid #ff6b6b;border-radius:8px;color:#ff6b6b;">'
+                                        'No model selected.</div>'),
+                        gr.update(visible=False),  # apply_btn
+                        gr.update(visible=False),  # refresh_btn
+                        None,                       # civitai_settings_state
+                        None,                       # civitai_model_info_state
+                        gr.update(visible=False),  # copy_triggers_btn
+                        gr.update(visible=False),  # preset_name
+                        gr.update(visible=False),  # save_preset_btn
+                        gr.update(visible=False),  # save_preset_status
+                    )
                     if not model_name or model_name == 'None':
-                        return (
-                            gr.update(value='<div style="padding:8px;border:1px solid #ff6b6b;border-radius:8px;color:#ff6b6b;">'
-                                            'No model selected.</div>'),
-                            gr.update(visible=False),
-                            gr.update(visible=False),
-                            None
-                        )
+                        return empty
 
-                    # Use saved key from config if the field shows the masked version or is empty
                     actual_key = api_key_field
                     if not actual_key or '...' in str(actual_key):
                         actual_key = modules.config.civitai_api_key
@@ -1254,32 +1275,161 @@ with shared.gradio_root:
                     )
 
                     html = modules.civitai_api.format_settings_html(result)
-
                     has_settings = 'settings' in result
                     raw_settings = result.get('settings') if has_settings else None
+                    model_info = result.get('model_info') if has_settings else None
+                    triggers = (model_info or {}).get('trainedWords') or []
+                    has_triggers = bool(triggers)
+                    # Default preset-name suggestion
+                    safe_model = ''
+                    if model_info and model_info.get('modelName'):
+                        safe_model = ''.join(c for c in model_info['modelName'] if c.isalnum() or c in ('_', '-'))[:40]
+                    suggested_preset_name = f'civitai_{safe_model}' if safe_model else ''
 
                     return (
                         gr.update(value=html),
                         gr.update(visible=has_settings),
                         gr.update(visible=has_settings),
-                        raw_settings
+                        raw_settings,
+                        model_info,
+                        gr.update(visible=has_triggers),
+                        gr.update(visible=has_settings, value=suggested_preset_name),
+                        gr.update(visible=has_settings),
+                        gr.update(visible=False, value=''),
                     )
 
                 def civitai_refresh_settings(model_name, api_key_field):
                     return civitai_fetch_settings(model_name, api_key_field, force_refresh=True)
 
+                _civitai_fetch_outputs = [
+                    civitai_panel, civitai_apply_btn, civitai_refresh_btn,
+                    civitai_settings_state, civitai_model_info_state,
+                    civitai_copy_triggers_btn,
+                    civitai_preset_name, civitai_save_preset_btn, civitai_save_preset_status,
+                ]
                 civitai_fetch_btn.click(
                     civitai_fetch_settings,
                     inputs=[base_model, civitai_api_key_input],
-                    outputs=[civitai_panel, civitai_apply_btn, civitai_refresh_btn, civitai_settings_state],
+                    outputs=_civitai_fetch_outputs,
                     queue=True, show_progress=True
                 )
-
                 civitai_refresh_btn.click(
                     civitai_refresh_settings,
                     inputs=[base_model, civitai_api_key_input],
-                    outputs=[civitai_panel, civitai_apply_btn, civitai_refresh_btn, civitai_settings_state],
+                    outputs=_civitai_fetch_outputs,
                     queue=True, show_progress=True
+                )
+
+                def civitai_copy_triggers_to_prompt(model_info_data, current_prompt):
+                    if not model_info_data or not isinstance(model_info_data, dict):
+                        return gr.update()
+                    words = model_info_data.get('trainedWords') or []
+                    if not words:
+                        return gr.update()
+                    current_prompt = current_prompt or ''
+                    existing = {t.strip().lower() for t in current_prompt.split(',') if t.strip()}
+                    to_add = []
+                    for w in words:
+                        k = w.strip().lower()
+                        if k and k not in existing:
+                            to_add.append(w.strip())
+                            existing.add(k)
+                    if not to_add:
+                        return gr.update()
+                    sep = '' if not current_prompt else (', ' if not current_prompt.rstrip().endswith(',') else ' ')
+                    return gr.update(value=current_prompt + sep + ', '.join(to_add))
+
+                civitai_copy_triggers_btn.click(
+                    civitai_copy_triggers_to_prompt,
+                    inputs=[civitai_model_info_state, prompt],
+                    outputs=[prompt],
+                    queue=False, show_progress=False
+                )
+
+                def civitai_save_consensus_as_preset(preset_name_v, civitai_settings, civitai_model_info,
+                                                      base_model_v, refiner_model_v, refiner_switch_v,
+                                                      guidance_scale_v, sharpness_v, adaptive_cfg_v, clip_skip_v,
+                                                      performance_v, image_number_v,
+                                                      prompt_v, negative_prompt_v,
+                                                      styles_v, aspect_ratio_v, vae_name_v,
+                                                      *lora_and_embedding_args):
+                    if not civitai_settings or not isinstance(civitai_settings, dict):
+                        return gr.update(value=('<div style="padding:6px;border:1px solid #ff6b6b;'
+                                                'border-radius:6px;color:#ff6b6b;">No CivitAI settings to save.</div>'),
+                                         visible=True)
+                    name = (preset_name_v or '').strip()
+                    if not name:
+                        info = civitai_model_info or {}
+                        stem = ''.join(c for c in (info.get('modelName') or '') if c.isalnum() or c in ('_', '-'))[:40]
+                        name = f'civitai_{stem}' if stem else 'civitai_preset'
+
+                    # Start from the CivitAI consensus, falling back to current UI values
+                    sampler_v = civitai_settings.get('sampler_fooocus') or modules.config.default_sampler
+                    scheduler_v = civitai_settings.get('scheduler_fooocus') or modules.config.default_scheduler
+                    cfg_v = civitai_settings.get('cfg_scale', guidance_scale_v)
+                    steps_v = civitai_settings.get('steps')
+                    if steps_v is None:
+                        steps_v = -1  # let Fooocus use the performance default
+                    clip_v = civitai_settings.get('clip_skip', clip_skip_v)
+
+                    current = {
+                        'base_model': base_model_v,
+                        'refiner_model': refiner_model_v,
+                        'refiner_switch': refiner_switch_v,
+                        'guidance_scale': cfg_v,
+                        'sharpness': sharpness_v,
+                        'adaptive_cfg': adaptive_cfg_v,
+                        'clip_skip': clip_v,
+                        'sampler_name': sampler_v,
+                        'scheduler_name': scheduler_v,
+                        'overwrite_step': steps_v,
+                        'overwrite_switch': -1,
+                        'performance_selection': performance_v,
+                        'image_number': image_number_v,
+                        'prompt': prompt_v,
+                        'negative_prompt': negative_prompt_v,
+                        'style_selections': styles_v,
+                        'aspect_ratios_selection': aspect_ratio_v,
+                        'vae_name': vae_name_v,
+                    }
+
+                    all_args = list(lora_and_embedding_args)
+                    lora_args = all_args[:_n_lora_ctrls]
+                    embedding_args = all_args[_n_lora_ctrls:_n_lora_ctrls + _n_embedding_ctrls]
+                    loras = []
+                    for i in range(0, len(lora_args), 3):
+                        if i + 2 < len(lora_args):
+                            loras.append([bool(lora_args[i]), str(lora_args[i + 1]), float(lora_args[i + 2])])
+                    current['loras'] = loras
+                    embeddings = []
+                    for i in range(0, len(embedding_args), 3):
+                        if i + 2 < len(embedding_args):
+                            embeddings.append([bool(embedding_args[i]), str(embedding_args[i + 1]), float(embedding_args[i + 2])])
+                    current['embeddings'] = embeddings
+
+                    success, msg = modules.config.save_preset_to_file(name, current, overwrite=False)
+                    color = '#4ecdc4' if success else '#ff6b6b'
+                    prefix = 'Saved' if success else 'Failed'
+                    return gr.update(
+                        value=(f'<div style="padding:6px;border:1px solid {color};border-radius:6px;color:{color};">'
+                               f'{prefix}: {msg}</div>'),
+                        visible=True,
+                    )
+
+                civitai_save_preset_inputs = [
+                    civitai_preset_name, civitai_settings_state, civitai_model_info_state,
+                    base_model, refiner_model, refiner_switch,
+                    guidance_scale, sharpness, adaptive_cfg, clip_skip,
+                    performance_selection, image_number,
+                    prompt, negative_prompt,
+                    style_selections, aspect_ratios_selection, vae_name,
+                ] + lora_ctrls + embedding_ctrls
+
+                civitai_save_preset_btn.click(
+                    civitai_save_consensus_as_preset,
+                    inputs=civitai_save_preset_inputs,
+                    outputs=[civitai_save_preset_status],
+                    queue=False, show_progress=False
                 )
 
                 def civitai_apply_settings(settings_data, current_sampler, current_scheduler,

@@ -3,6 +3,15 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-5] — 2026-04-18
+### Added
+- **Checkpoint trigger words** in the CivitAI panel. The fetch result now also surfaces the checkpoint's `trainedWords` (score_9 for Pony, NSFW-style activation tokens for some merges, etc.) in a highlighted block above the settings table. A **📋 Copy checkpoint triggers to prompt** button appears under the panel when triggers are available.
+- **💾 Save CivitAI consensus as preset** — button under the CivitAI Apply control that writes a new preset `.json` combining:
+  - The current base model, refiner, styles, aspect ratio, prompts, LoRAs, and embeddings.
+  - The CivitAI consensus sampler / scheduler / CFG / steps / clip-skip, overriding whatever was in the UI.
+  - Default preset name auto-suggested as `civitai_<ModelName>`; editable.
+  - Calls the existing `save_preset_to_file()` so new presets appear in the preset dropdown and can be re-loaded normally.
+
 ## [custom-4] — 2026-04-18
 ### Added
 - **Textual Inversion / Embeddings panel** in the Advanced tab (5 slots, matching the LoRA count).
