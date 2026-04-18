@@ -2,34 +2,92 @@
 <img src="https://github.com/lllyasviel/Fooocus/assets/19834515/483fb86d-c9a2-4c20-997c-46dafc124f25">
 </div>
 
-# Fooocus — 2025 Custom Fork (mikecastrodemaria/Fooocus2025)
+# Fooocus 2025 — Custom Fork
 
-This is a personal fork of [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5 with a couple of extra features on top. Upstream README preserved below.
+> A personal fork of **[lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5** with two quality-of-life features: a one-click **Save Preset** button and a **CivitAI Model Settings** integration that pulls community-recommended generation settings directly into the UI.
 
-## Custom additions in this fork
+**Original project:** [github.com/lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) · **Original Windows package (v2.5.0):** [Fooocus_win64_2-5-0.7z](https://github.com/lllyasviel/Fooocus/releases/download/v2.5.0/Fooocus_win64_2-5-0.7z)
 
-### 1. Save Preset button (Advanced → Developer tab)
-A **Save Preset** control is added to the Developer Debug Tools, placed after the Metadata Scheme. It lets you save the current Advanced settings as a new preset `.json` (or overwrite an existing one) directly from the UI — no more hand-editing preset files.
-
-### 2. CivitAI Model Settings integration
-Fetches community-recommended generation settings (sampler, CFG, steps, clip skip) for the currently selected model directly from [CivitAI](https://civitai.com/), aggregated from top-rated images. A panel shows the consensus, and an **Apply** button injects the settings into the Fooocus UI.
-
-**Setup:** Add your CivitAI API key in the UI — it is saved to `config.txt`. API responses are cached locally in `civitai_cache/` (git-ignored).
-
-New/changed files:
-- `modules/civitai_api.py` — CivitAI client and consensus aggregation
-- `modules/config.py`, `webui.py` — UI wiring for both features
-- `_versions/CHANGELOG.md` — fork changelog and backup snapshots of the original files
-
-## Environment notes
-
-Launch scripts in the install root are tuned for an **NVIDIA RTX 5090**:
-- `boot_check_rtx5090.bat`
-- `run_quality_rtx5090.bat`
-
-Use the stock `run.bat` / `run_realistic.bat` / `run_anime.bat` if you're on different hardware.
+> 💡 **For the complete upstream documentation** (installation, models, troubleshooting, CLI flags, etc.), scroll down to the [**Original Fooocus README**](#-original-fooocus-readme) section further down this page. This top section only documents what's different in this fork.
 
 ---
+
+## ✨ What's new in this fork
+
+### 1. 💾 Save Preset button
+**Where:** `Advanced` tab → `Developer` sub-tab → *Developer Debug Tools* (below the Metadata Scheme control).
+
+**What it does:** Saves your current Advanced-tab settings (sampler, steps, CFG, refiner, styles, etc.) as a reusable preset `.json` file in the `presets/` folder — without having to hand-edit JSON.
+
+**How to use:**
+1. Tune your settings in the Advanced tab as usual.
+2. Open `Advanced → Developer → Developer Debug Tools`.
+3. Type a name in the preset field:
+   - A **new name** → creates `presets/<name>.json`.
+   - An **existing preset name** → overwrites that preset.
+4. Click **Save Preset**. The preset appears in the normal preset dropdown on next launch.
+
+---
+
+### 2. 🎨 CivitAI Model Settings integration
+**Where:** new panel in the main UI, visible when a checkpoint is selected.
+
+**What it does:** Queries [CivitAI](https://civitai.com/) for the currently selected model, aggregates the generation settings used in the **top-rated community images** for that model, and shows a consensus view (most-used **sampler**, **CFG scale**, **steps**, **clip skip**). One click applies those settings to the Fooocus UI, so you're always generating with the parameters the community has already validated.
+
+**How to use:**
+1. **One-time setup:** paste your CivitAI API key into the field in the CivitAI panel — it is saved to `config.txt` for future sessions. Get a key at [civitai.com/user/account](https://civitai.com/user/account) (API Keys section).
+2. Select any model in the checkpoint dropdown.
+3. The panel fetches and displays the community consensus (cached locally in `civitai_cache/` to avoid repeat API calls).
+4. Click **Apply** to inject the recommended sampler / CFG / steps / clip-skip values into the Advanced tab.
+5. Generate.
+
+**Why it's useful:** every SDXL checkpoint has its own "sweet spot" parameters, and the uploader's page rarely lists them clearly. This reads them directly from what actually worked for the highest-rated outputs on CivitAI.
+
+---
+
+## 🚀 Getting this fork
+
+### Option A — I already have Fooocus installed
+```bash
+git clone https://github.com/mikecastrodemaria/Fooocus2025.git
+# or, inside an existing clone:
+git remote add fork2025 https://github.com/mikecastrodemaria/Fooocus2025.git
+git fetch fork2025 && git checkout -b fork2025-main fork2025/main
+```
+
+### Option B — Fresh install on Windows
+1. Download the original Windows package: **[Fooocus_win64_2-5-0.7z](https://github.com/lllyasviel/Fooocus/releases/download/v2.5.0/Fooocus_win64_2-5-0.7z)** (≈1.7 GB).
+2. Extract it.
+3. Inside the extracted `Fooocus/` subfolder, replace its contents with a clone of this fork:
+   ```bash
+   cd Fooocus_win64_2-5-0/Fooocus
+   git init && git remote add origin https://github.com/mikecastrodemaria/Fooocus2025.git
+   git fetch origin && git reset --hard origin/main
+   ```
+4. Run `run.bat` from the install root as usual.
+
+### Hardware note (RTX 5090 users)
+The install root of the original package can include launcher scripts tuned for an **NVIDIA RTX 5090** (`boot_check_rtx5090.bat`, `run_quality_rtx5090.bat`). These are *not* part of this git repo — use the stock `run.bat` / `run_realistic.bat` / `run_anime.bat` for any other hardware.
+
+---
+
+## 📁 Files touched by this fork
+| File | Purpose |
+|---|---|
+| `modules/civitai_api.py` | **New** — CivitAI client, caching, and consensus aggregation |
+| `modules/config.py` | UI config wiring for both features + API key persistence |
+| `webui.py` | UI elements (Save Preset button, CivitAI panel) |
+| `CHANGELOG.md` | Per-release fork history |
+| `.gitignore` | Excludes `civitai_cache/`, local presets, assistant artifacts |
+
+See [`CHANGELOG.md`](CHANGELOG.md) for versioned history.
+
+---
+---
+
+# 📖 Original Fooocus README
+
+*Everything below this point is the unmodified upstream readme from [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) — installation, models, features table, troubleshooting, etc.*
 
 [>>> Click Here to Install Fooocus <<<](#download)
 
