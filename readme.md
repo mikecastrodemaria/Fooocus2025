@@ -6,6 +6,10 @@
 
 > A personal fork of **[lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5** with a series of quality-of-life features: a **Save Preset** button, **CivitAI Model Settings** integration (checkpoint triggers, consensus settings, save-as-preset), **LoRA trigger words** from local metadata + CivitAI, **Embeddings panel** with bulk-insert, **Wildcards editor**, **Vary-with-aspect-ratio** override, and a real **Restart UI** button.
 
+![Fooocus2025 fork — Models tab showing CivitAI / LoRA / Embeddings / Wildcards accordions and Restart UI, with wildcards in the prompt](docs/screenshots/overview.png)
+
+*Above: the Models tab of the Advanced panel, showing the four fork-specific accordions (CivitAI, LoRA, Embeddings, Wildcards) and the Restart UI button. The generated images come from a prompt that uses two wildcards: `__artist-anime__` for the style and `__neg-weight__` in the negative — each expands to a random line from the matching `.txt` at generation time.*
+
 **Original project:** [github.com/lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) · **Original Windows package (v2.5.0):** [Fooocus_win64_2-5-0.7z](https://github.com/lllyasviel/Fooocus/releases/download/v2.5.0/Fooocus_win64_2-5-0.7z)
 
 > 💡 **For the complete upstream documentation** (installation, models, troubleshooting, CLI flags, etc.), scroll down to the [**Original Fooocus README**](#-original-fooocus-readme) section further down this page. This top section only documents what's different in this fork.
