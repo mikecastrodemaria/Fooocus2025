@@ -702,6 +702,9 @@ with shared.gradio_root:
 
                 with gr.Group():
                     lora_ctrls = []
+                    lora_model_dropdowns = []
+                    lora_trigger_displays = []
+                    lora_copy_btns = []
 
                     for i, (enabled, filename, weight) in enumerate(modules.config.default_loras):
                         with gr.Row():
@@ -714,6 +717,23 @@ with shared.gradio_root:
                                                     maximum=modules.config.default_loras_max_weight, step=0.01, value=weight,
                                                     elem_classes='lora_weight', scale=5)
                             lora_ctrls += [lora_enabled, lora_model, lora_weight]
+                            lora_model_dropdowns.append(lora_model)
+
+                        with gr.Row():
+                            lora_trigger_display = gr.Textbox(
+                                show_label=False, value='', interactive=False,
+                                placeholder=f'LoRA {i + 1} trigger words (auto-fetched from CivitAI)',
+                                elem_classes='lora_triggers', scale=10, container=False)
+                            lora_copy_btn = gr.Button(
+                                value='\U0001F4CB Copy to prompt', size='sm',
+                                variant='secondary', scale=2)
+                            lora_trigger_displays.append(lora_trigger_display)
+                            lora_copy_btns.append(lora_copy_btn)
+
+                    with gr.Row():
+                        lora_copy_all_btn = gr.Button(
+                            value='\U0001F4CB Copy ALL active LoRA triggers to prompt',
+                            variant='secondary', size='sm')
 
                 with gr.Row():
                     refresh_files = gr.Button(label='Refresh', value='\U0001f504 Refresh All Files', variant='secondary', elem_classes='refresh_button')
@@ -1182,6 +1202,77 @@ with shared.gradio_root:
                             guidance_scale, overwrite_step, clip_skip],
                     outputs=[sampler_name, scheduler_name, guidance_scale, overwrite_step,
                              clip_skip, civitai_panel],
+                    queue=False, show_progress=False
+                )
+
+                # === LoRA trigger words (CivitAI) event handlers ===
+                def _resolve_civitai_key(api_key_field):
+                    if api_key_field and '...' not in str(api_key_field):
+                        return api_key_field
+                    return modules.config.civitai_api_key or None
+
+                def fetch_lora_triggers_for_slot(lora_name, api_key_field):
+                    if not lora_name or lora_name == 'None':
+                        return gr.update(value='')
+                    result = modules.civitai_api.fetch_lora_triggers_combined(
+                        lora_filename=lora_name,
+                        paths_loras=modules.config.paths_loras,
+                        api_key=_resolve_civitai_key(api_key_field),
+                    )
+                    return gr.update(value=modules.civitai_api.format_lora_triggers_display(result))
+
+                for _dd, _disp in zip(lora_model_dropdowns, lora_trigger_displays):
+                    _dd.change(
+                        fetch_lora_triggers_for_slot,
+                        inputs=[_dd, civitai_api_key_input],
+                        outputs=[_disp],
+                        queue=True, show_progress=False
+                    )
+
+                def _append_words_to_prompt(new_words, current_prompt):
+                    current_prompt = current_prompt or ''
+                    existing = {w.strip().lower() for w in current_prompt.split(',') if w.strip()}
+                    to_add = []
+                    for w in new_words:
+                        w = w.strip()
+                        if w and w.lower() not in existing:
+                            to_add.append(w)
+                            existing.add(w.lower())
+                    if not to_add:
+                        return gr.update()
+                    sep = '' if not current_prompt else (', ' if not current_prompt.rstrip().endswith(',') else ' ')
+                    return gr.update(value=current_prompt + sep + ', '.join(to_add))
+
+                def copy_slot_triggers_to_prompt(trigger_text, current_prompt):
+                    if not trigger_text or trigger_text.startswith('('):
+                        return gr.update()
+                    words = [w for w in trigger_text.split(',') if w.strip()]
+                    return _append_words_to_prompt(words, current_prompt)
+
+                for _btn, _disp in zip(lora_copy_btns, lora_trigger_displays):
+                    _btn.click(
+                        copy_slot_triggers_to_prompt,
+                        inputs=[_disp, prompt],
+                        outputs=[prompt],
+                        queue=False, show_progress=False
+                    )
+
+                def copy_all_active_lora_triggers(current_prompt, *args):
+                    n = len(args) // 2
+                    trigger_texts = args[:n]
+                    enables = args[n:]
+                    words = []
+                    for txt, en in zip(trigger_texts, enables):
+                        if not en or not txt or txt.startswith('('):
+                            continue
+                        words.extend(w for w in txt.split(',') if w.strip())
+                    return _append_words_to_prompt(words, current_prompt)
+
+                _lora_enable_checkboxes = [lora_ctrls[i] for i in range(0, len(lora_ctrls), 3)]
+                lora_copy_all_btn.click(
+                    copy_all_active_lora_triggers,
+                    inputs=[prompt] + lora_trigger_displays + _lora_enable_checkboxes,
+                    outputs=[prompt],
                     queue=False, show_progress=False
                 )
 

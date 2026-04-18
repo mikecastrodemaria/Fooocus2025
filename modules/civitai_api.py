@@ -472,3 +472,186 @@ def format_settings_html(result):
 </div>'''
 
     return html
+
+
+# =============================================================================
+# LoRA trigger words (custom-3)
+# =============================================================================
+
+def _get_lora_cache_path(lora_filename):
+    """Local cache file for a LoRA's trigger words."""
+    safe_name = os.path.splitext(os.path.basename(lora_filename))[0]
+    return os.path.join(CIVITAI_CACHE_DIR, f'{safe_name}.lora.civitai.json')
+
+
+def load_cached_lora_triggers(lora_filename):
+    path = _get_lora_cache_path(lora_filename)
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f'[CivitAI] LoRA cache read error for {lora_filename}: {e}')
+    return None
+
+
+def save_lora_triggers_to_cache(lora_filename, data):
+    try:
+        os.makedirs(CIVITAI_CACHE_DIR, exist_ok=True)
+        path = _get_lora_cache_path(lora_filename)
+        to_save = {k: v for k, v in data.items() if not k.startswith('_')}
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(to_save, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f'[CivitAI] LoRA cache write error: {e}')
+
+
+def fetch_lora_triggers(lora_filename, paths_loras, api_key=None, force_refresh=False):
+    """Fetch trigger words (trainedWords) for a LoRA from CivitAI, with local cache.
+
+    Args:
+        lora_filename: LoRA file name (e.g., 'detail_tweaker_xl.safetensors').
+        paths_loras: List of LoRA search directories from modules.config.
+        api_key: Optional CivitAI API key.
+        force_refresh: If True, skip cache and re-query CivitAI.
+
+    Returns:
+        dict with either {'model_info': ..., 'trainedWords': [...]} on success
+        or {'error': ...} on any failure. Results (including misses) are cached
+        so we don't hammer the API for LoRAs that aren't on CivitAI.
+    """
+    if not lora_filename or lora_filename == 'None':
+        return {'error': 'No LoRA selected.'}
+
+    if not force_refresh:
+        cached = load_cached_lora_triggers(lora_filename)
+        if cached is not None:
+            cached['_from_cache'] = True
+            return cached
+
+    try:
+        filepath = get_file_from_folder_list(lora_filename, paths_loras)
+        if not os.path.isfile(filepath):
+            return {'error': f'LoRA file not found: {lora_filename}'}
+    except Exception as e:
+        return {'error': f'Error locating LoRA: {e}'}
+
+    try:
+        file_hash = _get_full_sha256(filepath)
+    except Exception as e:
+        return {'error': f'Error hashing LoRA: {e}'}
+
+    if not file_hash:
+        return {'error': 'Could not calculate LoRA hash.'}
+
+    data = _api_request(f'/model-versions/by-hash/{file_hash}', api_key=api_key)
+    if not data or 'id' not in data:
+        miss = {'error': f'LoRA not on CivitAI (hash {file_hash[:10]}...).'}
+        save_lora_triggers_to_cache(lora_filename, miss)
+        return miss
+
+    info = {
+        'modelId': data.get('modelId'),
+        'modelVersionId': data.get('id'),
+        'modelName': data.get('model', {}).get('name', 'Unknown'),
+        'versionName': data.get('name', 'Unknown'),
+        'baseModel': data.get('baseModel', 'Unknown'),
+    }
+    triggers = [str(w).strip() for w in (data.get('trainedWords') or []) if str(w).strip()]
+
+    result = {'model_info': info, 'trainedWords': triggers}
+    save_lora_triggers_to_cache(lora_filename, result)
+    return result
+
+
+def format_lora_triggers_display(result):
+    """Turn a fetch_lora_triggers() / fetch_lora_triggers_combined() result into
+    a user-facing trigger string for a read-only Textbox.
+
+    If the result contains no usable triggers, returns a parenthesised
+    placeholder so the "Copy to prompt" handler can detect and skip it.
+    """
+    if not result:
+        return '(no data)'
+    # Combined result: merged triggers list is authoritative
+    if 'merged' in result:
+        merged = result.get('merged') or []
+        if merged:
+            return ', '.join(merged)
+        # No merged triggers — surface why
+        local_err = result.get('local', {}).get('error', '')
+        civ_err = result.get('civitai', {}).get('error', '')
+        bits = []
+        if local_err:
+            bits.append(f'local: {local_err}')
+        if civ_err:
+            bits.append(f'civitai: {civ_err}')
+        return '(no triggers found — ' + '; '.join(bits) + ')' if bits else '(no triggers found)'
+    # Legacy single-source result shape
+    if 'error' in result:
+        return f'(no triggers — {result["error"]})'
+    info = result.get('model_info') or {}
+    words = result.get('trainedWords') or []
+    if not words:
+        name = info.get('modelName', '?')
+        return f'({name} — no trigger words listed)'
+    return ', '.join(words)
+
+
+def fetch_lora_triggers_combined(lora_filename, paths_loras, api_key=None, force_refresh=False):
+    """Get LoRA triggers from BOTH local safetensors metadata and CivitAI, merged.
+
+    Priority: local metadata triggers appear first (ground truth from training),
+    then any CivitAI-specific trigger words not already present are appended.
+    Both sources are still cached individually; this function only merges.
+
+    Returns dict:
+        {
+          'local':    <result from lora_metadata.get_lora_triggers_from_file>,
+          'civitai':  <result from fetch_lora_triggers>,
+          'merged':   [...],                # deduped, ordered: local first
+          'model_info': <civitai model_info if found, else None>,
+          'sources':  ['local', 'civitai']  # which actually contributed
+        }
+    """
+    # Local read (cheap, offline)
+    from modules import lora_metadata
+    local = lora_metadata.get_lora_triggers_from_file(lora_filename, paths_loras)
+
+    # CivitAI fetch (cached to disk after first hit)
+    civitai = fetch_lora_triggers(
+        lora_filename=lora_filename,
+        paths_loras=paths_loras,
+        api_key=api_key,
+        force_refresh=force_refresh,
+    )
+
+    merged = []
+    seen = set()
+    sources = []
+
+    for w in (local.get('trainedWords') or []):
+        wl = w.lower()
+        if wl not in seen:
+            merged.append(w)
+            seen.add(wl)
+    if merged:
+        sources.append('local')
+
+    civ_added = 0
+    for w in (civitai.get('trainedWords') or []):
+        wl = w.lower()
+        if wl not in seen:
+            merged.append(w)
+            seen.add(wl)
+            civ_added += 1
+    if civ_added:
+        sources.append('civitai')
+
+    return {
+        'local': local,
+        'civitai': civitai,
+        'merged': merged,
+        'model_info': civitai.get('model_info'),
+        'sources': sources,
+    }

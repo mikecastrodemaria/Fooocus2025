@@ -29,7 +29,28 @@
 
 ---
 
-### 2. 🎨 CivitAI Model Settings integration
+### 2. 🏷️ LoRA trigger words (local metadata + CivitAI, merged)
+**Where:** below each LoRA slot in the Advanced tab.
+
+**What it does:** Auto-detects trigger words for the selected LoRA from **two sources** and merges them in a small read-only field. One click injects them into your positive prompt — most LoRAs only activate their training when these tokens are present in the prompt.
+
+**Two sources, combined for coverage:**
+1. **Local safetensors metadata** — reads the `__metadata__` header directly from the `.safetensors` file. Pulls `modelspec.trigger_phrase`, the top-N most-frequent tags from `ss_tag_frequency`, and `ss_output_name` as fallback. **Instant, offline**, works for LoRAs never uploaded to CivitAI.
+2. **CivitAI `trainedWords`** — hash-based lookup of the LoRA on CivitAI (cached per file).
+
+Local triggers appear first (ground truth from training); any CivitAI-only extras are appended, deduped.
+
+**How to use:**
+1. Pick a LoRA in any of the 5 slots.
+2. Triggers auto-fetch and appear under the row. Local read happens instantly; CivitAI lookup runs in the background on first fetch (cached from then on).
+3. Click **📋 Copy to prompt** next to that slot — triggers are appended to the main prompt, de-duplicated against what's already there.
+4. Or click **📋 Copy ALL active LoRA triggers to prompt** below the rows to pull triggers from every *enabled* LoRA at once.
+
+CivitAI responses are cached in `civitai_cache/<lora_name>.lora.civitai.json` (git-ignored). LoRAs not found on CivitAI are also cached. Local metadata is read fresh each time (it's a sub-millisecond file read).
+
+---
+
+### 3. 🎨 CivitAI Model Settings integration
 **Where:** new panel in the main UI, visible when a checkpoint is selected.
 
 **What it does:** Queries [CivitAI](https://civitai.com/) for the currently selected model, aggregates the generation settings used in the **top-rated community images** for that model, and shows a consensus view (most-used **sampler**, **CFG scale**, **steps**, **clip skip**). One click applies those settings to the Fooocus UI, so you're always generating with the parameters the community has already validated.
