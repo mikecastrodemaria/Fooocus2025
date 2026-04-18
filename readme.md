@@ -2,7 +2,34 @@
 <img src="https://github.com/lllyasviel/Fooocus/assets/19834515/483fb86d-c9a2-4c20-997c-46dafc124f25">
 </div>
 
-# Fooocus
+# Fooocus — 2025 Custom Fork (mikecastrodemaria/Fooocus2025)
+
+This is a personal fork of [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5 with a couple of extra features on top. Upstream README preserved below.
+
+## Custom additions in this fork
+
+### 1. Save Preset button (Advanced → Developer tab)
+A **Save Preset** control is added to the Developer Debug Tools, placed after the Metadata Scheme. It lets you save the current Advanced settings as a new preset `.json` (or overwrite an existing one) directly from the UI — no more hand-editing preset files.
+
+### 2. CivitAI Model Settings integration
+Fetches community-recommended generation settings (sampler, CFG, steps, clip skip) for the currently selected model directly from [CivitAI](https://civitai.com/), aggregated from top-rated images. A panel shows the consensus, and an **Apply** button injects the settings into the Fooocus UI.
+
+**Setup:** Add your CivitAI API key in the UI — it is saved to `config.txt`. API responses are cached locally in `civitai_cache/` (git-ignored).
+
+New/changed files:
+- `modules/civitai_api.py` — CivitAI client and consensus aggregation
+- `modules/config.py`, `webui.py` — UI wiring for both features
+- `_versions/CHANGELOG.md` — fork changelog and backup snapshots of the original files
+
+## Environment notes
+
+Launch scripts in the install root are tuned for an **NVIDIA RTX 5090**:
+- `boot_check_rtx5090.bat`
+- `run_quality_rtx5090.bat`
+
+Use the stock `run.bat` / `run_realistic.bat` / `run_anime.bat` if you're on different hardware.
+
+---
 
 [>>> Click Here to Install Fooocus <<<](#download)
 

@@ -53,3 +53,17 @@ user_path_config-deprecated.txt
 /.coverage*
 /auth.json
 .DS_Store
+
+# Claude Code / local assistant artifacts
+.claude/
+CLAUDE.md
+.claude.json
+.claude.json.backup
+
+# Custom fork — runtime caches, local artifacts, internal backups
+/civitai_cache/
+civitai_api_key.txt
+/_versions/
+memory/
+MEMORY.md
+

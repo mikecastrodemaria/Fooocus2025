@@ -13,6 +13,7 @@ import modules.flags as flags
 import modules.gradio_hijack as grh
 import modules.style_sorter as style_sorter
 import modules.meta_parser
+import modules.civitai_api
 import args_manager
 import copy
 import launch
@@ -669,6 +670,37 @@ with shared.gradio_root:
                                          inputs=refiner_model, outputs=refiner_switch, show_progress=False, queue=False)
 
                 with gr.Group():
+                    gr.HTML('<b>CivitAI Model Settings</b>')
+                    _civitai_key = modules.config.civitai_api_key
+                    _civitai_key_display = (f'{_civitai_key[:4]}...{_civitai_key[-4:]}' if len(_civitai_key) > 8 else _civitai_key)
+                    _civitai_key_status = ' <span style="color:#4ecdc4;">(saved)</span>' if _civitai_key else ''
+                    with gr.Row():
+                        civitai_api_key_input = gr.Textbox(
+                            label=f'CivitAI API Key{_civitai_key_status}',
+                            value=_civitai_key_display if _civitai_key else '',
+                            placeholder='Enter your CivitAI API key...',
+                            scale=4)
+                        civitai_save_key_btn = gr.Button(value='\U0001F4BE Save Key', variant='secondary', scale=1)
+                    with gr.Row():
+                        civitai_fetch_btn = gr.Button(
+                            value='\U0001F50D Fetch CivitAI Settings',
+                            variant='secondary', scale=2)
+                        civitai_apply_btn = gr.Button(
+                            value='\U00002705 Apply These Settings',
+                            variant='primary', scale=2, visible=False)
+                        civitai_refresh_btn = gr.Button(
+                            value='\U0001F504 Refresh from CivitAI',
+                            variant='secondary', scale=2, visible=False)
+
+                    civitai_panel = gr.HTML(
+                        value='<div style="padding:8px;border:1px solid #444;border-radius:8px;color:#888;">'
+                              'Select a model and click "Fetch CivitAI Settings" to get community recommendations.</div>',
+                        visible=True)
+
+                    # Hidden state to store raw settings for the Apply button
+                    civitai_settings_state = gr.State(value=None)
+
+                with gr.Group():
                     lora_ctrls = []
 
                     for i, (enabled, filename, weight) in enumerate(modules.config.default_loras):
@@ -784,6 +816,25 @@ with shared.gradio_root:
                             save_metadata_to_images.change(lambda x: gr.update(visible=x), inputs=[save_metadata_to_images], outputs=[metadata_scheme],
                                                            queue=False, show_progress=False)
 
+                        gr.HTML('<br/><hr style="border-color: #555;">')
+                        gr.HTML('<b>Preset Manager</b> &mdash; Save current settings as a preset')
+
+                        with gr.Row():
+                            save_preset_name = gr.Textbox(label='New Preset Name', placeholder='my_custom_preset',
+                                                          value='', scale=3)
+                            save_preset_overwrite_dropdown = gr.Dropdown(
+                                label='Or Overwrite Existing',
+                                choices=modules.config.get_user_presets(),
+                                value=None, scale=3)
+
+                        with gr.Row():
+                            save_preset_new_btn = gr.Button(value='\U0001F4BE Save as New Preset',
+                                                            variant='secondary', scale=1)
+                            save_preset_overwrite_btn = gr.Button(value='\U0000270F Overwrite Selected',
+                                                                   variant='stop', scale=1)
+
+                        save_preset_status = gr.HTML(value='', visible=True)
+
                     with gr.Tab(label='Control'):
                         debugging_cn_preprocessor = gr.Checkbox(label='Debug Preprocessors', value=False,
                                                                 info='See the results from preprocessors.')
@@ -885,6 +936,254 @@ with shared.gradio_root:
                     refresh_files_output += [preset_selection]
                 refresh_files.click(refresh_files_clicked, [], refresh_files_output + lora_ctrls,
                                     queue=False, show_progress=False)
+
+                # === Preset Manager Event Handlers ===
+                if not args_manager.args.disable_metadata:
+
+                    # Inputs for collecting current settings
+                    preset_save_inputs = [
+                        save_preset_name,
+                        save_preset_overwrite_dropdown,
+                        base_model, refiner_model, refiner_switch,
+                        guidance_scale, sharpness, adaptive_cfg, clip_skip,
+                        sampler_name, scheduler_name,
+                        overwrite_step, overwrite_switch,
+                        performance_selection, image_number,
+                        prompt, negative_prompt,
+                        style_selections, aspect_ratios_selection,
+                        vae_name,
+                    ] + lora_ctrls
+
+                    def _collect_current_values(preset_name, overwrite_target,
+                                                 base_model_v, refiner_model_v, refiner_switch_v,
+                                                 guidance_scale_v, sharpness_v, adaptive_cfg_v, clip_skip_v,
+                                                 sampler_name_v, scheduler_name_v,
+                                                 overwrite_step_v, overwrite_switch_v,
+                                                 performance_v, image_number_v,
+                                                 prompt_v, negative_prompt_v,
+                                                 styles_v, aspect_ratio_v,
+                                                 vae_name_v,
+                                                 *lora_args):
+                        """Collect all current UI values into a dict for save_preset_to_file."""
+                        current = {
+                            'base_model': base_model_v,
+                            'refiner_model': refiner_model_v,
+                            'refiner_switch': refiner_switch_v,
+                            'guidance_scale': guidance_scale_v,
+                            'sharpness': sharpness_v,
+                            'adaptive_cfg': adaptive_cfg_v,
+                            'clip_skip': clip_skip_v,
+                            'sampler_name': sampler_name_v,
+                            'scheduler_name': scheduler_name_v,
+                            'overwrite_step': overwrite_step_v,
+                            'overwrite_switch': overwrite_switch_v,
+                            'performance_selection': performance_v,
+                            'image_number': image_number_v,
+                            'prompt': prompt_v,
+                            'negative_prompt': negative_prompt_v,
+                            'style_selections': styles_v,
+                            'aspect_ratios_selection': aspect_ratio_v,
+                            'vae_name': vae_name_v,
+                        }
+
+                        # Reconstruct LoRA list from flat args: [enabled, model, weight, ...]
+                        loras = []
+                        lora_list = list(lora_args)
+                        for i in range(0, len(lora_list), 3):
+                            if i + 2 < len(lora_list):
+                                loras.append([bool(lora_list[i]), str(lora_list[i + 1]), float(lora_list[i + 2])])
+                        current['loras'] = loras
+
+                        return preset_name, overwrite_target, current
+
+                    has_preset_dropdown = not args_manager.args.disable_preset_selection
+
+                    def _build_result(html_update, dropdown_update, presets_update=None):
+                        """Build result tuple matching the number of expected outputs."""
+                        result = [html_update, dropdown_update]
+                        if has_preset_dropdown:
+                            result.append(presets_update if presets_update is not None else gr.update())
+                        return result
+
+                    def save_new_preset(preset_name, overwrite_target, *args):
+                        name, _, current = _collect_current_values(preset_name, overwrite_target, *args)
+                        if not name or not name.strip():
+                            return _build_result(
+                                gr.update(value='<span style="color: #ff6b6b;">Saisis un nom de preset.</span>'),
+                                gr.update())
+                        success, msg = modules.config.save_preset_to_file(name, current, overwrite=False)
+                        color = '#4ecdc4' if success else '#ff6b6b'
+                        html = f'<span style="color: {color};">{msg}</span>'
+                        if success:
+                            user_presets = modules.config.get_user_presets()
+                            return _build_result(
+                                gr.update(value=html),
+                                gr.update(choices=user_presets, value=name.strip()),
+                                gr.update(choices=modules.config.available_presets))
+                        return _build_result(gr.update(value=html), gr.update())
+
+                    def overwrite_existing_preset(preset_name, overwrite_target, *args):
+                        _, target, current = _collect_current_values(preset_name, overwrite_target, *args)
+                        if not target:
+                            return _build_result(
+                                gr.update(value='<span style="color: #ff6b6b;">Selectionne un preset a ecraser.</span>'),
+                                gr.update())
+                        success, msg = modules.config.save_preset_to_file(target, current, overwrite=True)
+                        color = '#4ecdc4' if success else '#ff6b6b'
+                        html = f'<span style="color: {color};">{msg}</span>'
+                        if success:
+                            user_presets = modules.config.get_user_presets()
+                            return _build_result(
+                                gr.update(value=html),
+                                gr.update(choices=user_presets, value=target),
+                                gr.update(choices=modules.config.available_presets))
+                        return _build_result(gr.update(value=html), gr.update())
+
+                    save_preset_save_outputs = [save_preset_status, save_preset_overwrite_dropdown]
+                    if has_preset_dropdown:
+                        save_preset_save_outputs += [preset_selection]
+
+                    save_preset_new_btn.click(
+                        save_new_preset,
+                        inputs=preset_save_inputs,
+                        outputs=save_preset_save_outputs,
+                        queue=False, show_progress=False
+                    )
+
+                    save_preset_overwrite_btn.click(
+                        overwrite_existing_preset,
+                        inputs=preset_save_inputs,
+                        outputs=save_preset_save_outputs,
+                        queue=False, show_progress=False
+                    )
+
+                # === CivitAI Integration Event Handlers ===
+                def civitai_save_key(api_key):
+                    # Don't save the masked version
+                    if '...' in str(api_key):
+                        return gr.update()
+                    success, msg = modules.config.save_civitai_api_key(api_key)
+                    if success and api_key:
+                        masked = f'{api_key[:4]}...{api_key[-4:]}' if len(api_key) > 8 else api_key
+                        return gr.update(value=masked, label='CivitAI API Key <span style="color:#4ecdc4;">(saved)</span>')
+                    return gr.update(label=f'CivitAI API Key <span style="color:#ff6b6b;">({msg})</span>')
+
+                civitai_save_key_btn.click(
+                    civitai_save_key,
+                    inputs=[civitai_api_key_input],
+                    outputs=[civitai_api_key_input],
+                    queue=False, show_progress=False
+                )
+
+                def civitai_fetch_settings(model_name, api_key_field, force_refresh=False):
+                    if not model_name or model_name == 'None':
+                        return (
+                            gr.update(value='<div style="padding:8px;border:1px solid #ff6b6b;border-radius:8px;color:#ff6b6b;">'
+                                            'No model selected.</div>'),
+                            gr.update(visible=False),
+                            gr.update(visible=False),
+                            None
+                        )
+
+                    # Use saved key from config if the field shows the masked version or is empty
+                    actual_key = api_key_field
+                    if not actual_key or '...' in str(actual_key):
+                        actual_key = modules.config.civitai_api_key
+
+                    result = modules.civitai_api.fetch_recommended_settings(
+                        model_filename=model_name,
+                        paths_checkpoints=modules.config.paths_checkpoints,
+                        api_key=actual_key if actual_key else None,
+                        force_refresh=force_refresh
+                    )
+
+                    html = modules.civitai_api.format_settings_html(result)
+
+                    has_settings = 'settings' in result
+                    raw_settings = result.get('settings') if has_settings else None
+
+                    return (
+                        gr.update(value=html),
+                        gr.update(visible=has_settings),
+                        gr.update(visible=has_settings),
+                        raw_settings
+                    )
+
+                def civitai_refresh_settings(model_name, api_key_field):
+                    return civitai_fetch_settings(model_name, api_key_field, force_refresh=True)
+
+                civitai_fetch_btn.click(
+                    civitai_fetch_settings,
+                    inputs=[base_model, civitai_api_key_input],
+                    outputs=[civitai_panel, civitai_apply_btn, civitai_refresh_btn, civitai_settings_state],
+                    queue=True, show_progress=True
+                )
+
+                civitai_refresh_btn.click(
+                    civitai_refresh_settings,
+                    inputs=[base_model, civitai_api_key_input],
+                    outputs=[civitai_panel, civitai_apply_btn, civitai_refresh_btn, civitai_settings_state],
+                    queue=True, show_progress=True
+                )
+
+                def civitai_apply_settings(settings_data, current_sampler, current_scheduler,
+                                            current_cfg, current_steps, current_clip_skip):
+                    if not settings_data or not isinstance(settings_data, dict):
+                        return [gr.update()] * 5 + [gr.update(value='<div style="padding:8px;border:1px solid #ff6b6b;border-radius:8px;color:#ff6b6b;">No settings to apply.</div>')]
+
+                    updates = {}
+
+                    # Sampler
+                    if settings_data.get('sampler_fooocus'):
+                        updates['sampler'] = settings_data['sampler_fooocus']
+                    # Scheduler
+                    if settings_data.get('scheduler_fooocus'):
+                        updates['scheduler'] = settings_data['scheduler_fooocus']
+                    # CFG
+                    if 'cfg_scale' in settings_data:
+                        updates['cfg'] = settings_data['cfg_scale']
+                    # Steps
+                    if 'steps' in settings_data:
+                        updates['steps'] = settings_data['steps']
+                    # Clip Skip
+                    if 'clip_skip' in settings_data:
+                        updates['clip_skip'] = settings_data['clip_skip']
+
+                    applied = []
+                    sampler_up = gr.update(value=updates['sampler']) if 'sampler' in updates else gr.update()
+                    if 'sampler' in updates:
+                        applied.append(f'Sampler: {updates["sampler"]}')
+
+                    scheduler_up = gr.update(value=updates['scheduler']) if 'scheduler' in updates else gr.update()
+                    if 'scheduler' in updates:
+                        applied.append(f'Scheduler: {updates["scheduler"]}')
+
+                    cfg_up = gr.update(value=updates['cfg']) if 'cfg' in updates else gr.update()
+                    if 'cfg' in updates:
+                        applied.append(f'CFG: {updates["cfg"]}')
+
+                    steps_up = gr.update(value=updates['steps']) if 'steps' in updates else gr.update()
+                    if 'steps' in updates:
+                        applied.append(f'Steps: {updates["steps"]}')
+
+                    clip_up = gr.update(value=updates['clip_skip']) if 'clip_skip' in updates else gr.update()
+                    if 'clip_skip' in updates:
+                        applied.append(f'Clip Skip: {updates["clip_skip"]}')
+
+                    applied_str = ', '.join(applied) if applied else 'Nothing changed'
+                    panel_html = f'<div style="padding:8px;border:1px solid #4ecdc4;border-radius:8px;color:#4ecdc4;">' \
+                                 f'Applied: {applied_str}</div>'
+
+                    return [sampler_up, scheduler_up, cfg_up, steps_up, clip_up, gr.update(value=panel_html)]
+
+                civitai_apply_btn.click(
+                    civitai_apply_settings,
+                    inputs=[civitai_settings_state, sampler_name, scheduler_name,
+                            guidance_scale, overwrite_step, clip_skip],
+                    outputs=[sampler_name, scheduler_name, guidance_scale, overwrite_step,
+                             clip_skip, civitai_panel],
+                    queue=False, show_progress=False
+                )
 
         state_is_generating = gr.State(False)
 

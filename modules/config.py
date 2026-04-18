@@ -668,6 +668,35 @@ metadata_created_by = get_config_item_or_set_default(
     expected_type=str
 )
 
+civitai_api_key = get_config_item_or_set_default(
+    key='civitai_api_key',
+    default_value='',
+    validator=lambda x: isinstance(x, str),
+    disable_empty_as_none=True,
+    expected_type=str
+)
+
+
+def save_civitai_api_key(key):
+    """Save the CivitAI API key to config.txt."""
+    global civitai_api_key, config_dict
+    civitai_api_key = key.strip()
+    config_dict['civitai_api_key'] = civitai_api_key
+
+    # Update config file
+    try:
+        current_config = {}
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                current_config = json.load(f)
+        current_config['civitai_api_key'] = civitai_api_key
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(current_config, f, indent=4)
+        return True, "API key saved."
+    except Exception as e:
+        return False, f"Error saving key: {str(e)}"
+
+
 example_inpaint_prompts = [[x] for x in example_inpaint_prompts]
 example_enhance_detection_prompts = [[x] for x in example_enhance_detection_prompts]
 
@@ -762,6 +791,110 @@ if REWRITE_PRESET and isinstance(args_manager.args.preset, str):
         json.dump({k: config_dict[k] for k in possible_preset_keys}, json_file, indent=4)
     print(f'Preset saved to {save_path}. Exiting ...')
     exit(0)
+
+
+def remove_ratio(x):
+    """Convert display ratio '1152×896 <span ...>...' back to '1152*896' for preset storage."""
+    if isinstance(x, str) and '\u00d7' in x:
+        clean = x.split('<')[0].strip()
+        return clean.replace('\u00d7', '*')
+    return x
+
+
+def save_preset_to_file(preset_name, current_values, overwrite=False):
+    """Save current UI settings as a preset JSON file.
+
+    Args:
+        preset_name: Name for the preset (without .json)
+        current_values: Dict of UI parameter names to their current values
+        overwrite: If True, overwrite existing preset
+
+    Returns:
+        (success: bool, message: str)
+    """
+    if not preset_name or not preset_name.strip():
+        return False, "Nom de preset vide."
+
+    preset_name = preset_name.strip()
+
+    # Sanitize filename
+    safe_name = "".join(c for c in preset_name if c.isalnum() or c in ('_', '-', ' ')).strip()
+    if not safe_name:
+        return False, "Nom de preset invalide."
+
+    save_path = os.path.abspath(f'./presets/{safe_name}.json')
+
+    if os.path.exists(save_path) and not overwrite:
+        return False, f"Le preset '{safe_name}' existe deja. Utilise 'Ecraser' pour le remplacer."
+
+    # Build preset dict from current UI values
+    # Mapping: UI variable name -> preset config key
+    ui_to_config = {
+        'base_model': 'default_model',
+        'refiner_model': 'default_refiner',
+        'refiner_switch': 'default_refiner_switch',
+        'guidance_scale': 'default_cfg_scale',
+        'sharpness': 'default_sample_sharpness',
+        'adaptive_cfg': 'default_cfg_tsnr',
+        'clip_skip': 'default_clip_skip',
+        'sampler_name': 'default_sampler',
+        'scheduler_name': 'default_scheduler',
+        'overwrite_step': 'default_overwrite_step',
+        'overwrite_switch': 'default_overwrite_switch',
+        'performance_selection': 'default_performance',
+        'image_number': 'default_image_number',
+        'prompt': 'default_prompt',
+        'negative_prompt': 'default_prompt_negative',
+        'style_selections': 'default_styles',
+        'aspect_ratios_selection': 'default_aspect_ratio',
+        'vae_name': 'default_vae',
+    }
+
+    preset_data = {}
+
+    for ui_key, config_key in ui_to_config.items():
+        if ui_key in current_values:
+            val = current_values[ui_key]
+            # Convert aspect ratio back to storage format
+            if config_key == 'default_aspect_ratio':
+                val = remove_ratio(val)
+            # Convert overwrite_step/switch: -1 means disabled
+            if config_key in ('default_overwrite_step', 'default_overwrite_switch'):
+                if isinstance(val, (int, float)) and val <= 0:
+                    val = -1
+            preset_data[config_key] = val
+
+    # Handle LoRAs
+    if 'loras' in current_values:
+        preset_data['default_loras'] = current_values['loras']
+
+    # Add download references from current config if available
+    if 'default_model' in preset_data:
+        model_name = preset_data['default_model']
+        if model_name in config_dict.get('checkpoint_downloads', {}):
+            preset_data['checkpoint_downloads'] = {model_name: config_dict['checkpoint_downloads'][model_name]}
+        else:
+            preset_data['checkpoint_downloads'] = {}
+
+    preset_data['embeddings_downloads'] = config_dict.get('embeddings_downloads', {})
+    preset_data['lora_downloads'] = config_dict.get('lora_downloads', {})
+    preset_data.setdefault('previous_default_models', config_dict.get('previous_default_models', []))
+
+    try:
+        os.makedirs('presets', exist_ok=True)
+        with open(save_path, "w", encoding="utf-8") as json_file:
+            json.dump(preset_data, json_file, indent=4, ensure_ascii=False)
+
+        # Update available presets list
+        update_presets()
+        return True, f"Preset '{safe_name}' sauvegarde avec succes!"
+    except Exception as e:
+        return False, f"Erreur lors de la sauvegarde: {str(e)}"
+
+
+def get_user_presets():
+    """Return list of user-editable presets (exclude 'initial')."""
+    return [p for p in get_presets() if p != 'initial']
 
 
 def add_ratio(x):
