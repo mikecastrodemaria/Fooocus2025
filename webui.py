@@ -764,11 +764,17 @@ with shared.gradio_root:
                     embedding_insert_prompt_btns = []
                     embedding_insert_negative_btns = []
 
+                    gr.HTML('<div style="font-size:12px;color:#888;padding:2px 4px;">'
+                            'The checkbox only filters the <b>Insert ALL active</b> bulk button \u2014 '
+                            'per-slot <b>Prompt</b> / <b>Negative</b> buttons always work. '
+                            'Embeddings activate purely from their token in the text, not from any enable flag.'
+                            '</div>')
+
                     _embedding_default_count = 5
                     for i in range(_embedding_default_count):
                         with gr.Row():
                             emb_enabled = gr.Checkbox(
-                                label='Enable', value=(i == 0),
+                                label='Include', value=(i == 0),
                                 elem_classes=['emb_enable', 'min_check'], scale=1)
                             emb_model = gr.Dropdown(
                                 label=f'Embedding {i + 1}',
@@ -1051,22 +1057,21 @@ with shared.gradio_root:
                                     queue=False, show_progress=False)
 
                 def _restart_ui():
-                    """Restart the whole Python process by re-execing the current interpreter.
+                    """Exit the Python process with code 42, which the launcher .bat
+                    interprets as 'please restart me'. See run*.bat for the loop.
 
-                    The browser will lose the Gradio connection; user needs to refresh the page
-                    after a few seconds.
+                    If the user's launcher doesn't implement the restart loop, the
+                    process will just exit and the console will stay open (pause).
                     """
-                    def _do_exec():
-                        time.sleep(0.4)  # let the Gradio response leave the socket
-                        try:
-                            os.execv(sys.executable, [sys.executable] + sys.argv)
-                        except Exception as e:
-                            print(f'[Restart] os.execv failed: {e}; falling back to os._exit(42)')
-                            os._exit(42)
+                    def _do_exit():
+                        time.sleep(0.4)  # let the Gradio response leave the socket first
+                        os._exit(42)
                     import threading
-                    threading.Thread(target=_do_exec, daemon=True).start()
+                    threading.Thread(target=_do_exit, daemon=True).start()
                     return gr.update(value='<div style="padding:8px;border:1px solid #ffa500;border-radius:6px;'
-                                           'color:#ffa500;">\u26A0 Restarting\u2026 wait ~30 s then refresh this page.</div>')
+                                           'color:#ffa500;">\u26A0 Restarting\u2026 wait ~30 s then refresh this page. '
+                                           'If the page does not come back, your launcher does not implement the '
+                                           'restart loop \u2014 re-run the .bat manually.</div>')
 
                 restart_ui_btn.click(
                     _restart_ui,
@@ -1440,60 +1445,92 @@ with shared.gradio_root:
                         return f'(embedding:{stem}:1.0)'
                     return f'(embedding:{stem}:{round(w, 2)})'
 
-                def _append_embedding_to_textbox(emb_name, weight, current_text):
-                    token = _format_embedding_token(emb_name, weight)
-                    if not token:
-                        return gr.update()
-                    current_text = current_text or ''
-                    if token in current_text:
-                        return gr.update()
-                    sep = '' if not current_text else (', ' if not current_text.rstrip().endswith(',') else ' ')
-                    return gr.update(value=current_text + sep + token)
-
-                for _btn, _dd, _wt in zip(embedding_insert_prompt_btns, embedding_dropdowns, embedding_weights):
-                    _btn.click(
-                        _append_embedding_to_textbox,
-                        inputs=[_dd, _wt, prompt],
-                        outputs=[prompt],
-                        queue=False, show_progress=False
-                    )
-                for _btn, _dd, _wt in zip(embedding_insert_negative_btns, embedding_dropdowns, embedding_weights):
-                    _btn.click(
-                        _append_embedding_to_textbox,
-                        inputs=[_dd, _wt, negative_prompt],
-                        outputs=[negative_prompt],
-                        queue=False, show_progress=False
-                    )
-
-                def _insert_all_embeddings(current_text, *args):
-                    # args = [name1..N, weight1..N, enable1..N]
-                    n = len(args) // 3
-                    names = args[:n]
-                    weights = args[n:2 * n]
-                    enables = args[2 * n:]
-                    current_text = current_text or ''
-                    to_add = []
-                    for nm, wt, en in zip(names, weights, enables):
-                        if not en:
+                def _extract_extra_trigger_words(trigger_text, emb_stem):
+                    """Return trigger-display words that aren't the filename stem itself
+                    and aren't one of the placeholder '(...)' hints.
+                    """
+                    if not trigger_text or trigger_text.startswith('('):
+                        return []
+                    stem_lc = (emb_stem or '').strip().lower()
+                    words = []
+                    for w in trigger_text.split(','):
+                        w = w.strip()
+                        if not w:
                             continue
-                        tok = _format_embedding_token(nm, wt)
-                        if tok and tok not in current_text and tok not in to_add:
-                            to_add.append(tok)
+                        if w.lower() == stem_lc:
+                            continue
+                        words.append(w)
+                    return words
+
+                def _append_with_dedup(current_text, items):
+                    if not items:
+                        return gr.update()
+                    current_text = current_text or ''
+                    existing_tokens = {t.strip().lower() for t in current_text.split(',') if t.strip()}
+                    to_add = []
+                    for item in items:
+                        key = item.strip().lower()
+                        if not key or key in existing_tokens:
+                            continue
+                        to_add.append(item)
+                        existing_tokens.add(key)
                     if not to_add:
                         return gr.update()
                     sep = '' if not current_text else (', ' if not current_text.rstrip().endswith(',') else ' ')
                     return gr.update(value=current_text + sep + ', '.join(to_add))
 
+                def _append_embedding_slot_to_textbox(emb_name, weight, trigger_text, current_text):
+                    token = _format_embedding_token(emb_name, weight)
+                    if not token:
+                        return gr.update()
+                    stem = os.path.splitext(os.path.basename(str(emb_name)))[0]
+                    items = [token] + _extract_extra_trigger_words(trigger_text, stem)
+                    return _append_with_dedup(current_text, items)
+
+                for _btn, _dd, _wt, _disp in zip(embedding_insert_prompt_btns, embedding_dropdowns, embedding_weights, embedding_trigger_displays):
+                    _btn.click(
+                        _append_embedding_slot_to_textbox,
+                        inputs=[_dd, _wt, _disp, prompt],
+                        outputs=[prompt],
+                        queue=False, show_progress=False
+                    )
+                for _btn, _dd, _wt, _disp in zip(embedding_insert_negative_btns, embedding_dropdowns, embedding_weights, embedding_trigger_displays):
+                    _btn.click(
+                        _append_embedding_slot_to_textbox,
+                        inputs=[_dd, _wt, _disp, negative_prompt],
+                        outputs=[negative_prompt],
+                        queue=False, show_progress=False
+                    )
+
+                def _insert_all_embeddings(current_text, *args):
+                    # args layout: [name1..N, weight1..N, enable1..N, trigger_display1..N]
+                    n = len(args) // 4
+                    names = args[:n]
+                    weights = args[n:2 * n]
+                    enables = args[2 * n:3 * n]
+                    triggers = args[3 * n:4 * n]
+                    items = []
+                    for nm, wt, en, tt in zip(names, weights, enables, triggers):
+                        if not en:
+                            continue
+                        tok = _format_embedding_token(nm, wt)
+                        if not tok:
+                            continue
+                        items.append(tok)
+                        stem = os.path.splitext(os.path.basename(str(nm)))[0]
+                        items.extend(_extract_extra_trigger_words(tt, stem))
+                    return _append_with_dedup(current_text, items)
+
                 _emb_enable_checkboxes = [embedding_ctrls[i] for i in range(0, len(embedding_ctrls), 3)]
                 emb_insert_all_prompt_btn.click(
                     _insert_all_embeddings,
-                    inputs=[prompt] + embedding_dropdowns + embedding_weights + _emb_enable_checkboxes,
+                    inputs=[prompt] + embedding_dropdowns + embedding_weights + _emb_enable_checkboxes + embedding_trigger_displays,
                     outputs=[prompt],
                     queue=False, show_progress=False
                 )
                 emb_insert_all_negative_btn.click(
                     _insert_all_embeddings,
-                    inputs=[negative_prompt] + embedding_dropdowns + embedding_weights + _emb_enable_checkboxes,
+                    inputs=[negative_prompt] + embedding_dropdowns + embedding_weights + _emb_enable_checkboxes + embedding_trigger_displays,
                     outputs=[negative_prompt],
                     queue=False, show_progress=False
                 )
