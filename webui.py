@@ -1,6 +1,7 @@
 import gradio as gr
 import random
 import os
+import sys
 import json
 import time
 import shared
@@ -176,6 +177,14 @@ with shared.gradio_root:
                     default_prompt = modules.config.default_prompt
                     if isinstance(default_prompt, str) and default_prompt != '':
                         shared.gradio_root.load(lambda: default_prompt, outputs=prompt)
+
+                    gr.HTML('<div class="prompt_spacer" style="height:8px;"></div>')
+
+                    negative_prompt = gr.Textbox(
+                        show_label=False,
+                        placeholder="Negative prompt \u2014 describe what you do not want to see.",
+                        elem_id='negative_prompt', lines=2,
+                        value=modules.config.default_prompt_negative)
 
                 with gr.Column(scale=3, min_width=0):
                     generate_button = gr.Button(label="Generate", value="Generate", elem_classes='type_row', elem_id='generate_button', visible=True)
@@ -585,10 +594,22 @@ with shared.gradio_root:
                                          choices=flags.OutputFormat.list(),
                                          value=modules.config.default_output_format)
 
-                negative_prompt = gr.Textbox(label='Negative Prompt', show_label=True, placeholder="Type prompt here.",
-                                             info='Describing what you do not want to see.', lines=2,
-                                             elem_id='negative_prompt',
-                                             value=modules.config.default_prompt_negative)
+                with gr.Accordion(label='\U0001F4BE Preset Manager', open=False):
+                    gr.HTML('<div style="font-size:12px;color:#888;margin-bottom:4px;">Save the current settings (prompts, styles, LoRAs, embeddings, samplers\u2026) as a reusable preset.</div>')
+                    with gr.Row():
+                        save_preset_name = gr.Textbox(label='New Preset Name', placeholder='my_custom_preset',
+                                                      value='', scale=3)
+                        save_preset_overwrite_dropdown = gr.Dropdown(
+                            label='Or Overwrite Existing',
+                            choices=modules.config.get_user_presets(),
+                            value=None, scale=3)
+                    with gr.Row():
+                        save_preset_new_btn = gr.Button(value='\U0001F4BE Save as New Preset',
+                                                        variant='secondary', scale=1)
+                        save_preset_overwrite_btn = gr.Button(value='\U0000270F Overwrite Selected',
+                                                               variant='stop', scale=1)
+                    save_preset_status = gr.HTML(value='', visible=True)
+
                 seed_random = gr.Checkbox(label='Random', value=True)
                 image_seed = gr.Textbox(label='Seed', value=0, max_lines=1, visible=False) # workaround for https://github.com/gradio-app/gradio/issues/5354
 
@@ -669,8 +690,7 @@ with shared.gradio_root:
                     refiner_model.change(lambda x: gr.update(visible=x != 'None'),
                                          inputs=refiner_model, outputs=refiner_switch, show_progress=False, queue=False)
 
-                with gr.Group():
-                    gr.HTML('<b>CivitAI Model Settings</b>')
+                with gr.Accordion(label='\U0001F3A8 CivitAI Model Settings', open=False):
                     _civitai_key = modules.config.civitai_api_key
                     _civitai_key_display = (f'{_civitai_key[:4]}...{_civitai_key[-4:]}' if len(_civitai_key) > 8 else _civitai_key)
                     _civitai_key_status = ' <span style="color:#4ecdc4;">(saved)</span>' if _civitai_key else ''
@@ -700,7 +720,7 @@ with shared.gradio_root:
                     # Hidden state to store raw settings for the Apply button
                     civitai_settings_state = gr.State(value=None)
 
-                with gr.Group():
+                with gr.Accordion(label='\U0001F9EC LoRA', open=True):
                     lora_ctrls = []
                     lora_model_dropdowns = []
                     lora_trigger_displays = []
@@ -735,8 +755,100 @@ with shared.gradio_root:
                             value='\U0001F4CB Copy ALL active LoRA triggers to prompt',
                             variant='secondary', size='sm')
 
+                # === Textual Inversion / Embeddings ===
+                with gr.Accordion(label='\U0001F9E9 Textual Inversion / Embeddings', open=False):
+                    embedding_ctrls = []
+                    embedding_dropdowns = []
+                    embedding_weights = []
+                    embedding_trigger_displays = []
+                    embedding_insert_prompt_btns = []
+                    embedding_insert_negative_btns = []
+
+                    _embedding_default_count = 5
+                    for i in range(_embedding_default_count):
+                        with gr.Row():
+                            emb_enabled = gr.Checkbox(
+                                label='Enable', value=(i == 0),
+                                elem_classes=['emb_enable', 'min_check'], scale=1)
+                            emb_model = gr.Dropdown(
+                                label=f'Embedding {i + 1}',
+                                choices=['None'] + modules.config.embedding_filenames,
+                                value='None',
+                                elem_classes='emb_model', scale=5)
+                            emb_weight = gr.Slider(
+                                label='Weight', minimum=0.1, maximum=3.0,
+                                step=0.01, value=1.0,
+                                elem_classes='emb_weight', scale=5)
+                            embedding_ctrls += [emb_enabled, emb_model, emb_weight]
+                            embedding_dropdowns.append(emb_model)
+                            embedding_weights.append(emb_weight)
+
+                        with gr.Row():
+                            emb_trigger_display = gr.Textbox(
+                                show_label=False, value='', interactive=False,
+                                placeholder=f'Embedding {i + 1} activation token (auto-detected)',
+                                elem_classes='emb_triggers', scale=6, container=False)
+                            emb_insert_prompt_btn = gr.Button(
+                                value='\U0001F4CB Prompt',
+                                variant='secondary', scale=2, min_width=90)
+                            emb_insert_negative_btn = gr.Button(
+                                value='\U0001F4CB Negative',
+                                variant='secondary', scale=2, min_width=90)
+                            embedding_trigger_displays.append(emb_trigger_display)
+                            embedding_insert_prompt_btns.append(emb_insert_prompt_btn)
+                            embedding_insert_negative_btns.append(emb_insert_negative_btn)
+
+                    with gr.Row():
+                        emb_insert_all_prompt_btn = gr.Button(
+                            value='\U0001F4CB Insert ALL active embeddings to prompt',
+                            variant='secondary', size='sm', scale=1)
+                        emb_insert_all_negative_btn = gr.Button(
+                            value='\U0001F4CB Insert ALL active embeddings to negative',
+                            variant='secondary', size='sm', scale=1)
+
+                # === Wildcards ===
+                with gr.Accordion(label='\U0001F3B2 Wildcards', open=False):
+                    with gr.Row():
+                        wildcard_dropdown = gr.Dropdown(
+                            label='Wildcard file',
+                            choices=['None'] + modules.config.wildcard_filenames,
+                            value='None', scale=5)
+                        wildcard_insert_btn = gr.Button(
+                            value='\U0001F4CB Insert __token__ to prompt',
+                            variant='secondary', scale=2, min_width=90)
+                    wildcard_editor = gr.Textbox(
+                        label='Contents (one entry per line, edit freely)',
+                        value='', lines=12, max_lines=30,
+                        interactive=True,
+                        placeholder='Select a wildcard file above to edit its contents, '
+                                    'or type a new name below and click Create to start a new file.')
+                    with gr.Row():
+                        wildcard_save_btn = gr.Button(
+                            value='\U0001F4BE Save', variant='secondary', scale=1, min_width=90)
+                        wildcard_new_name = gr.Textbox(
+                            show_label=False,
+                            placeholder='name_for_new_wildcard (no extension)',
+                            value='', scale=4, container=False)
+                        wildcard_create_btn = gr.Button(
+                            value='\U00002795 Create new', variant='primary', scale=1, min_width=90)
+                    wildcard_status = gr.HTML(value='', visible=True)
+                    gr.HTML('<div style="font-size:12px;color:#888;padding:2px 4px;">'
+                            'Wildcards expand to a random line at generation time. '
+                            'Token format: <code>__filename__</code> (without the .txt extension). '
+                            'Save writes back to the selected file; Create makes a new <code>.txt</code> '
+                            'in the wildcards folder using the current contents.'
+                            '</div>')
+
                 with gr.Row():
-                    refresh_files = gr.Button(label='Refresh', value='\U0001f504 Refresh All Files', variant='secondary', elem_classes='refresh_button')
+                    refresh_files = gr.Button(label='Refresh', value='\U0001f504 Refresh All Files', variant='secondary', elem_classes='refresh_button', scale=3)
+                    restart_ui_btn = gr.Button(
+                        value='\U000026A0 Restart UI', variant='stop',
+                        scale=1, min_width=110,
+                        elem_classes='refresh_button')
+                gr.HTML('<div style="font-size:11px;color:#888;padding:2px 6px;">'
+                        'Use Refresh for new files. Restart reloads the whole Python process '
+                        '(re-reads config.txt, reimports modules, re-loads the model).</div>')
+                _restart_notice = gr.HTML(value='', visible=True)
             with gr.Tab(label='Advanced'):
                 guidance_scale = gr.Slider(label='Guidance Scale', minimum=1.0, maximum=30.0, step=0.01,
                                            value=modules.config.default_cfg_scale,
@@ -835,25 +947,6 @@ with shared.gradio_root:
 
                             save_metadata_to_images.change(lambda x: gr.update(visible=x), inputs=[save_metadata_to_images], outputs=[metadata_scheme],
                                                            queue=False, show_progress=False)
-
-                        gr.HTML('<br/><hr style="border-color: #555;">')
-                        gr.HTML('<b>Preset Manager</b> &mdash; Save current settings as a preset')
-
-                        with gr.Row():
-                            save_preset_name = gr.Textbox(label='New Preset Name', placeholder='my_custom_preset',
-                                                          value='', scale=3)
-                            save_preset_overwrite_dropdown = gr.Dropdown(
-                                label='Or Overwrite Existing',
-                                choices=modules.config.get_user_presets(),
-                                value=None, scale=3)
-
-                        with gr.Row():
-                            save_preset_new_btn = gr.Button(value='\U0001F4BE Save as New Preset',
-                                                            variant='secondary', scale=1)
-                            save_preset_overwrite_btn = gr.Button(value='\U0000270F Overwrite Selected',
-                                                                   variant='stop', scale=1)
-
-                        save_preset_status = gr.HTML(value='', visible=True)
 
                     with gr.Tab(label='Control'):
                         debugging_cn_preprocessor = gr.Checkbox(label='Debug Preprocessors', value=False,
@@ -957,10 +1050,38 @@ with shared.gradio_root:
                 refresh_files.click(refresh_files_clicked, [], refresh_files_output + lora_ctrls,
                                     queue=False, show_progress=False)
 
+                def _restart_ui():
+                    """Restart the whole Python process by re-execing the current interpreter.
+
+                    The browser will lose the Gradio connection; user needs to refresh the page
+                    after a few seconds.
+                    """
+                    def _do_exec():
+                        time.sleep(0.4)  # let the Gradio response leave the socket
+                        try:
+                            os.execv(sys.executable, [sys.executable] + sys.argv)
+                        except Exception as e:
+                            print(f'[Restart] os.execv failed: {e}; falling back to os._exit(42)')
+                            os._exit(42)
+                    import threading
+                    threading.Thread(target=_do_exec, daemon=True).start()
+                    return gr.update(value='<div style="padding:8px;border:1px solid #ffa500;border-radius:6px;'
+                                           'color:#ffa500;">\u26A0 Restarting\u2026 wait ~30 s then refresh this page.</div>')
+
+                restart_ui_btn.click(
+                    _restart_ui,
+                    inputs=[],
+                    outputs=[_restart_notice],
+                    queue=False, show_progress=False
+                )
+
                 # === Preset Manager Event Handlers ===
                 if not args_manager.args.disable_metadata:
 
                     # Inputs for collecting current settings
+                    _n_lora_ctrls = len(lora_ctrls)
+                    _n_embedding_ctrls = len(embedding_ctrls)
+
                     preset_save_inputs = [
                         save_preset_name,
                         save_preset_overwrite_dropdown,
@@ -972,7 +1093,7 @@ with shared.gradio_root:
                         prompt, negative_prompt,
                         style_selections, aspect_ratios_selection,
                         vae_name,
-                    ] + lora_ctrls
+                    ] + lora_ctrls + embedding_ctrls
 
                     def _collect_current_values(preset_name, overwrite_target,
                                                  base_model_v, refiner_model_v, refiner_switch_v,
@@ -983,7 +1104,7 @@ with shared.gradio_root:
                                                  prompt_v, negative_prompt_v,
                                                  styles_v, aspect_ratio_v,
                                                  vae_name_v,
-                                                 *lora_args):
+                                                 *lora_and_embedding_args):
                         """Collect all current UI values into a dict for save_preset_to_file."""
                         current = {
                             'base_model': base_model_v,
@@ -1006,13 +1127,23 @@ with shared.gradio_root:
                             'vae_name': vae_name_v,
                         }
 
+                        all_args = list(lora_and_embedding_args)
+                        lora_args = all_args[:_n_lora_ctrls]
+                        embedding_args = all_args[_n_lora_ctrls:_n_lora_ctrls + _n_embedding_ctrls]
+
                         # Reconstruct LoRA list from flat args: [enabled, model, weight, ...]
                         loras = []
-                        lora_list = list(lora_args)
-                        for i in range(0, len(lora_list), 3):
-                            if i + 2 < len(lora_list):
-                                loras.append([bool(lora_list[i]), str(lora_list[i + 1]), float(lora_list[i + 2])])
+                        for i in range(0, len(lora_args), 3):
+                            if i + 2 < len(lora_args):
+                                loras.append([bool(lora_args[i]), str(lora_args[i + 1]), float(lora_args[i + 2])])
                         current['loras'] = loras
+
+                        # Reconstruct Embeddings list from flat args: [enabled, model, weight, ...]
+                        embeddings = []
+                        for i in range(0, len(embedding_args), 3):
+                            if i + 2 < len(embedding_args):
+                                embeddings.append([bool(embedding_args[i]), str(embedding_args[i + 1]), float(embedding_args[i + 2])])
+                        current['embeddings'] = embeddings
 
                         return preset_name, overwrite_target, current
 
@@ -1272,6 +1403,204 @@ with shared.gradio_root:
                 lora_copy_all_btn.click(
                     copy_all_active_lora_triggers,
                     inputs=[prompt] + lora_trigger_displays + _lora_enable_checkboxes,
+                    outputs=[prompt],
+                    queue=False, show_progress=False
+                )
+
+                # === Embeddings event handlers ===
+                def fetch_embedding_triggers_for_slot(emb_name, api_key_field):
+                    if not emb_name or emb_name == 'None':
+                        return gr.update(value='')
+                    result = modules.civitai_api.fetch_model_triggers_combined(
+                        filename=emb_name,
+                        paths=[modules.config.path_embeddings],
+                        kind='embedding',
+                        api_key=_resolve_civitai_key(api_key_field),
+                    )
+                    return gr.update(value=modules.civitai_api.format_lora_triggers_display(result))
+
+                for _dd, _disp in zip(embedding_dropdowns, embedding_trigger_displays):
+                    _dd.change(
+                        fetch_embedding_triggers_for_slot,
+                        inputs=[_dd, civitai_api_key_input],
+                        outputs=[_disp],
+                        queue=True, show_progress=False
+                    )
+
+                def _format_embedding_token(emb_name, weight):
+                    """Build the Fooocus activation token for an embedding slot."""
+                    if not emb_name or emb_name == 'None':
+                        return ''
+                    stem = os.path.splitext(os.path.basename(str(emb_name)))[0]
+                    try:
+                        w = float(weight)
+                    except (TypeError, ValueError):
+                        w = 1.0
+                    if abs(w - 1.0) < 1e-3:
+                        return f'(embedding:{stem}:1.0)'
+                    return f'(embedding:{stem}:{round(w, 2)})'
+
+                def _append_embedding_to_textbox(emb_name, weight, current_text):
+                    token = _format_embedding_token(emb_name, weight)
+                    if not token:
+                        return gr.update()
+                    current_text = current_text or ''
+                    if token in current_text:
+                        return gr.update()
+                    sep = '' if not current_text else (', ' if not current_text.rstrip().endswith(',') else ' ')
+                    return gr.update(value=current_text + sep + token)
+
+                for _btn, _dd, _wt in zip(embedding_insert_prompt_btns, embedding_dropdowns, embedding_weights):
+                    _btn.click(
+                        _append_embedding_to_textbox,
+                        inputs=[_dd, _wt, prompt],
+                        outputs=[prompt],
+                        queue=False, show_progress=False
+                    )
+                for _btn, _dd, _wt in zip(embedding_insert_negative_btns, embedding_dropdowns, embedding_weights):
+                    _btn.click(
+                        _append_embedding_to_textbox,
+                        inputs=[_dd, _wt, negative_prompt],
+                        outputs=[negative_prompt],
+                        queue=False, show_progress=False
+                    )
+
+                def _insert_all_embeddings(current_text, *args):
+                    # args = [name1..N, weight1..N, enable1..N]
+                    n = len(args) // 3
+                    names = args[:n]
+                    weights = args[n:2 * n]
+                    enables = args[2 * n:]
+                    current_text = current_text or ''
+                    to_add = []
+                    for nm, wt, en in zip(names, weights, enables):
+                        if not en:
+                            continue
+                        tok = _format_embedding_token(nm, wt)
+                        if tok and tok not in current_text and tok not in to_add:
+                            to_add.append(tok)
+                    if not to_add:
+                        return gr.update()
+                    sep = '' if not current_text else (', ' if not current_text.rstrip().endswith(',') else ' ')
+                    return gr.update(value=current_text + sep + ', '.join(to_add))
+
+                _emb_enable_checkboxes = [embedding_ctrls[i] for i in range(0, len(embedding_ctrls), 3)]
+                emb_insert_all_prompt_btn.click(
+                    _insert_all_embeddings,
+                    inputs=[prompt] + embedding_dropdowns + embedding_weights + _emb_enable_checkboxes,
+                    outputs=[prompt],
+                    queue=False, show_progress=False
+                )
+                emb_insert_all_negative_btn.click(
+                    _insert_all_embeddings,
+                    inputs=[negative_prompt] + embedding_dropdowns + embedding_weights + _emb_enable_checkboxes,
+                    outputs=[negative_prompt],
+                    queue=False, show_progress=False
+                )
+
+                # === Wildcards event handlers ===
+                def _sanitize_wildcard_name(name):
+                    """Strip any path/extension, keep only safe filename characters."""
+                    if not name:
+                        return ''
+                    stem = os.path.splitext(os.path.basename(str(name).strip()))[0]
+                    return ''.join(c for c in stem if c.isalnum() or c in ('_', '-'))
+
+                def _wildcard_status_html(ok, msg):
+                    color = '#4ecdc4' if ok else '#ff6b6b'
+                    return (f'<div style="padding:6px 8px;border:1px solid {color};'
+                            f'border-radius:6px;color:{color};font-size:12px;">{msg}</div>')
+
+                def _load_wildcard_into_editor(name):
+                    if not name or name == 'None':
+                        return gr.update(value=''), gr.update(value='')
+                    try:
+                        filepath = os.path.join(modules.config.path_wildcards, str(name))
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                    except Exception as e:
+                        return (gr.update(value=''),
+                                gr.update(value=_wildcard_status_html(False, f'Cannot read {name}: {e}')))
+                    return gr.update(value=content), gr.update(value='')
+
+                wildcard_dropdown.change(
+                    _load_wildcard_into_editor,
+                    inputs=[wildcard_dropdown],
+                    outputs=[wildcard_editor, wildcard_status],
+                    queue=False, show_progress=False
+                )
+
+                def _save_wildcard(name, content):
+                    if not name or name == 'None':
+                        return (gr.update(),
+                                gr.update(value=_wildcard_status_html(False, 'Pick a wildcard file to save into, or use Create New.')))
+                    safe = _sanitize_wildcard_name(name)
+                    if not safe:
+                        return (gr.update(),
+                                gr.update(value=_wildcard_status_html(False, f'Invalid wildcard name: {name}')))
+                    filepath = os.path.join(modules.config.path_wildcards, f'{safe}.txt')
+                    try:
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(content or '')
+                    except Exception as e:
+                        return (gr.update(),
+                                gr.update(value=_wildcard_status_html(False, f'Save failed: {e}')))
+                    modules.config.update_files()
+                    return (gr.update(choices=['None'] + modules.config.wildcard_filenames, value=f'{safe}.txt'),
+                            gr.update(value=_wildcard_status_html(True, f'Saved {safe}.txt ({len((content or "").splitlines())} lines).')))
+
+                wildcard_save_btn.click(
+                    _save_wildcard,
+                    inputs=[wildcard_dropdown, wildcard_editor],
+                    outputs=[wildcard_dropdown, wildcard_status],
+                    queue=False, show_progress=False
+                )
+
+                def _create_wildcard(new_name, content):
+                    safe = _sanitize_wildcard_name(new_name)
+                    if not safe:
+                        return (gr.update(), gr.update(),
+                                gr.update(value=_wildcard_status_html(False, 'Provide a name (letters, digits, _ -).')))
+                    filepath = os.path.join(modules.config.path_wildcards, f'{safe}.txt')
+                    if os.path.exists(filepath):
+                        return (gr.update(), gr.update(),
+                                gr.update(value=_wildcard_status_html(False, f'{safe}.txt already exists. Select it from the dropdown and Save to overwrite.')))
+                    try:
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(content or '')
+                    except Exception as e:
+                        return (gr.update(), gr.update(),
+                                gr.update(value=_wildcard_status_html(False, f'Create failed: {e}')))
+                    modules.config.update_files()
+                    return (
+                        gr.update(choices=['None'] + modules.config.wildcard_filenames, value=f'{safe}.txt'),
+                        gr.update(value=''),
+                        gr.update(value=_wildcard_status_html(True, f'Created {safe}.txt.')),
+                    )
+
+                wildcard_create_btn.click(
+                    _create_wildcard,
+                    inputs=[wildcard_new_name, wildcard_editor],
+                    outputs=[wildcard_dropdown, wildcard_new_name, wildcard_status],
+                    queue=False, show_progress=False
+                )
+
+                def _insert_wildcard_token(name, current_prompt):
+                    if not name or name == 'None':
+                        return gr.update()
+                    stem = os.path.splitext(os.path.basename(str(name)))[0]
+                    if not stem:
+                        return gr.update()
+                    token = f'__{stem}__'
+                    current_prompt = current_prompt or ''
+                    if token in current_prompt:
+                        return gr.update()
+                    sep = '' if not current_prompt else (', ' if not current_prompt.rstrip().endswith(',') else ' ')
+                    return gr.update(value=current_prompt + sep + token)
+
+                wildcard_insert_btn.click(
+                    _insert_wildcard_token,
+                    inputs=[wildcard_dropdown, prompt],
                     outputs=[prompt],
                     queue=False, show_progress=False
                 )

@@ -50,7 +50,36 @@ CivitAI responses are cached in `civitai_cache/<lora_name>.lora.civitai.json` (g
 
 ---
 
-### 3. 🎨 CivitAI Model Settings integration
+### 3. 🧩 Textual Inversion / Embeddings panel
+**Where:** Advanced tab, right below the LoRA section.
+
+**What it does:** Gives embeddings a proper UI instead of the hidden `(embedding:filename:weight)` syntax that most users never discover. 3 slots by default, each with a dropdown of available embeddings from `models/embeddings/`, a weight slider, and two buttons to inject the activation token into either the positive or negative prompt (embeddings are often negative-prompt tools — `BadHands`, `FastNegativeV2`, `unaestheticXL`, etc.).
+
+**How to use:**
+1. Select an embedding in any slot. Its activation token appears in the read-only field below the row (auto-detected — the filename stem, plus any extra tokens from safetensors metadata or CivitAI).
+2. Set a weight (default 1.0).
+3. Click **📋 To prompt** or **📋 To negative** — the token `(embedding:<name>:<weight>)` is appended to the chosen textbox, de-duplicated.
+4. Or fill multiple slots and use **📋 Insert ALL active embeddings to prompt / negative** to inject all enabled ones at once.
+
+Uses the same local-metadata + CivitAI merged-triggers pipeline as the LoRA feature (`fetch_model_triggers_combined(kind='embedding')`). Cache: `civitai_cache/<name>.embedding.civitai.json`.
+
+---
+
+### 4. 🎲 Wildcards panel
+**Where:** Advanced tab, below the Embeddings section (collapsible accordion).
+
+**What it does:** Gives Fooocus's built-in wildcards a UI. Instead of remembering filenames and typing `__name__` by hand, you pick a wildcard file from a dropdown, preview its first 30 lines, and one-click insert the `__token__` into the positive prompt.
+
+**How to use:**
+1. Open Advanced → 🎲 Wildcards.
+2. Pick a file from the dropdown (lists every `.txt` in your wildcards folder, e.g., `animal`, `artist-anime`, `adj-general`).
+3. Preview appears below (first 30 lines, with a "… and N more" marker for long files).
+4. Click **📋 Insert __token__ to prompt** — the corresponding `__<filename>__` token is appended to the positive prompt, de-duplicated.
+5. Generate — Fooocus expands each occurrence of the token to a random line from the file at generation time.
+
+---
+
+### 5. 🎨 CivitAI Model Settings integration
 **Where:** new panel in the main UI, visible when a checkpoint is selected.
 
 **What it does:** Queries [CivitAI](https://civitai.com/) for the currently selected model, aggregates the generation settings used in the **top-rated community images** for that model, and shows a consensus view (most-used **sampler**, **CFG scale**, **steps**, **clip skip**). One click applies those settings to the Fooocus UI, so you're always generating with the parameters the community has already validated.

@@ -3,6 +3,32 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-4] — 2026-04-18
+### Added
+- **Textual Inversion / Embeddings panel** in the Advanced tab (5 slots, matching the LoRA count).
+  - Each slot: dropdown of available embeddings from `models/embeddings/`, weight slider, enable checkbox.
+  - Mirrors the LoRA trigger-words UX: activation token is auto-detected (filename + any extra tokens from safetensors metadata or CivitAI), shown in a read-only field below the row.
+  - **📋 To prompt** / **📋 To negative** buttons per slot insert `(embedding:<name>:<weight>)` into the corresponding textbox.
+  - **Insert ALL active to prompt / negative** buttons below the rows insert every enabled embedding's activation token at once.
+### Changed
+- **Negative prompt moved** to the main prompt area, directly below the positive prompt. Previously buried in the Advanced tab; now visible without enabling Advanced. Styled to match the positive prompt (shared CSS on `#positive_prompt`, `#negative_prompt` — same rounded corners and background). Small spacer between the two textboxes.
+- **Preset Manager moved** out of the Developer → Debug Tools tab and into the Advanced → main aspect section (where the negative prompt used to be). Wrapped in its own `gr.Accordion` labelled "💾 Preset Manager" (collapsed by default).
+- **Preset Manager now saves embeddings** alongside LoRAs. Saved as `default_embeddings` in the preset JSON with the same `[enabled, name, weight]` shape as `default_loras`. (Loading embeddings from a preset on preset-switch is not yet wired — follow-up.)
+- **Collapsible sections** in the Advanced tab — CivitAI, LoRA, and Embeddings are now `gr.Accordion` panels. LoRA starts open (most-used), CivitAI and Embeddings start collapsed to reduce visual clutter.
+### Added (continued)
+- **Wildcards panel** in the Advanced tab (below Embeddings) with full editor:
+  - Dropdown of all `.txt` files in the wildcards folder.
+  - **Editable scrollable text area** with the file's full contents (not just a preview — edit in place).
+  - **💾 Save** writes the edited contents back to the selected file.
+  - **➕ Create new** — type a name (letters/digits/_/- only) and save the current contents as a new `.txt` in the wildcards folder; name is sanitised and collisions are rejected.
+  - **📋 Insert __token__ to prompt** inserts the `__filename__` token into the positive prompt, deduped.
+  - Filesystem changes trigger `update_files()` so the dropdown refreshes immediately.
+- **⚠️ Restart UI button** next to Refresh All Files — re-execs the Python process (`os.execv`) so edits to `config.txt`, custom Python modules, or external model additions are picked up cleanly. User must refresh the browser tab after ~30 s (SDXL reload on RTX 5090). Clearly labelled as secondary to "Refresh All Files", which already handles new-file discovery without restart.
+### Refactored
+- Generalised `fetch_lora_triggers_combined` → `fetch_model_triggers_combined(filename, paths, kind, api_key)` in `modules/civitai_api.py`; `kind='lora'` and `kind='embedding'` share the same pipeline with separate cache namespaces (`<name>.lora.civitai.json` / `<name>.embedding.civitai.json`). Legacy `fetch_lora_triggers_combined` kept as a shim for back-compat.
+- `modules/lora_metadata.py` extended with `extract_embedding_triggers_from_metadata()` and `get_embedding_triggers_from_file()` — for embeddings the filename stem is always the primary trigger; extra tokens from `sd_embedding_tokens` / `modelspec.trigger_phrase` are appended when present.
+- `modules/config.py`: new `embedding_filenames` list, populated by `update_files()` scanning `path_embeddings` for `.safetensors`/`.pt`/`.bin`.
+
 ## [custom-3] — 2026-04-18
 ### Added
 - **LoRA trigger words — local metadata + CivitAI, merged**

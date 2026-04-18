@@ -74,11 +74,13 @@ progress::after {
     text-align: right;
     width: 215px;
 }
-div:has(> #positive_prompt) {
+div:has(> #positive_prompt),
+div:has(> #negative_prompt) {
     border: none;
 }
 
-#positive_prompt {
+#positive_prompt,
+#negative_prompt {
     padding: 1px;
     background: var(--background-fill-primary);
 }
@@ -127,20 +129,24 @@ div:has(> #positive_prompt) {
     margin-left: -5px !important;
 }
 
-.lora_enable label {
+.lora_enable label,
+.emb_enable label {
   height: 100%;
 }
 
-.lora_enable label input {
+.lora_enable label input,
+.emb_enable label input {
   margin: auto;
 }
 
-.lora_enable label span {
+.lora_enable label span,
+.emb_enable label span {
   display: none;
 }
 
 @-moz-document url-prefix() {
-  .lora_weight input[type=number] {
+  .lora_weight input[type=number],
+  .emb_weight input[type=number] {
     width: 80px;
   }
 }

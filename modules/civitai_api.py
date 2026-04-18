@@ -478,76 +478,98 @@ def format_settings_html(result):
 # LoRA trigger words (custom-3)
 # =============================================================================
 
+_CACHE_SUFFIX_BY_KIND = {
+    'lora': 'lora',
+    'embedding': 'embedding',
+}
+
+
+def _get_triggers_cache_path(filename, kind='lora'):
+    """Local cache file for a model's trigger words, namespaced by kind."""
+    safe_name = os.path.splitext(os.path.basename(filename))[0]
+    suffix = _CACHE_SUFFIX_BY_KIND.get(kind, kind)
+    return os.path.join(CIVITAI_CACHE_DIR, f'{safe_name}.{suffix}.civitai.json')
+
+
 def _get_lora_cache_path(lora_filename):
-    """Local cache file for a LoRA's trigger words."""
-    safe_name = os.path.splitext(os.path.basename(lora_filename))[0]
-    return os.path.join(CIVITAI_CACHE_DIR, f'{safe_name}.lora.civitai.json')
+    """Legacy name kept for any external callers."""
+    return _get_triggers_cache_path(lora_filename, kind='lora')
 
 
-def load_cached_lora_triggers(lora_filename):
-    path = _get_lora_cache_path(lora_filename)
+def load_cached_triggers(filename, kind='lora'):
+    path = _get_triggers_cache_path(filename, kind=kind)
     if os.path.exists(path):
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            print(f'[CivitAI] LoRA cache read error for {lora_filename}: {e}')
+            print(f'[CivitAI] {kind} cache read error for {filename}: {e}')
     return None
 
 
-def save_lora_triggers_to_cache(lora_filename, data):
+def save_triggers_to_cache(filename, data, kind='lora'):
     try:
         os.makedirs(CIVITAI_CACHE_DIR, exist_ok=True)
-        path = _get_lora_cache_path(lora_filename)
+        path = _get_triggers_cache_path(filename, kind=kind)
         to_save = {k: v for k, v in data.items() if not k.startswith('_')}
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(to_save, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        print(f'[CivitAI] LoRA cache write error: {e}')
+        print(f'[CivitAI] {kind} cache write error: {e}')
 
 
-def fetch_lora_triggers(lora_filename, paths_loras, api_key=None, force_refresh=False):
-    """Fetch trigger words (trainedWords) for a LoRA from CivitAI, with local cache.
+# Legacy names for backwards-compat
+def load_cached_lora_triggers(lora_filename):
+    return load_cached_triggers(lora_filename, kind='lora')
+
+
+def save_lora_triggers_to_cache(lora_filename, data):
+    save_triggers_to_cache(lora_filename, data, kind='lora')
+
+
+def fetch_model_triggers(filename, paths, kind='lora', api_key=None, force_refresh=False):
+    """Fetch trainedWords for a model (LoRA or embedding) from CivitAI by hash, cached.
 
     Args:
-        lora_filename: LoRA file name (e.g., 'detail_tweaker_xl.safetensors').
-        paths_loras: List of LoRA search directories from modules.config.
-        api_key: Optional CivitAI API key.
-        force_refresh: If True, skip cache and re-query CivitAI.
+        filename: file name (e.g., 'detail_tweaker_xl.safetensors').
+        paths: list of search directories (e.g., modules.config.paths_loras
+               or [modules.config.path_embeddings]).
+        kind: 'lora' or 'embedding' — only affects the cache namespace.
+        api_key: optional CivitAI API key.
+        force_refresh: if True, skip cache and re-query CivitAI.
 
     Returns:
-        dict with either {'model_info': ..., 'trainedWords': [...]} on success
-        or {'error': ...} on any failure. Results (including misses) are cached
-        so we don't hammer the API for LoRAs that aren't on CivitAI.
+        {'model_info': ..., 'trainedWords': [...]} on success,
+        {'error': ...} on any failure. Misses are cached too.
     """
-    if not lora_filename or lora_filename == 'None':
-        return {'error': 'No LoRA selected.'}
+    if not filename or filename == 'None':
+        return {'error': f'No {kind} selected.'}
 
     if not force_refresh:
-        cached = load_cached_lora_triggers(lora_filename)
+        cached = load_cached_triggers(filename, kind=kind)
         if cached is not None:
             cached['_from_cache'] = True
             return cached
 
     try:
-        filepath = get_file_from_folder_list(lora_filename, paths_loras)
+        filepath = get_file_from_folder_list(filename, paths)
         if not os.path.isfile(filepath):
-            return {'error': f'LoRA file not found: {lora_filename}'}
+            return {'error': f'{kind} file not found: {filename}'}
     except Exception as e:
-        return {'error': f'Error locating LoRA: {e}'}
+        return {'error': f'Error locating {kind}: {e}'}
 
     try:
         file_hash = _get_full_sha256(filepath)
     except Exception as e:
-        return {'error': f'Error hashing LoRA: {e}'}
+        return {'error': f'Error hashing {kind}: {e}'}
 
     if not file_hash:
-        return {'error': 'Could not calculate LoRA hash.'}
+        return {'error': f'Could not calculate {kind} hash.'}
 
     data = _api_request(f'/model-versions/by-hash/{file_hash}', api_key=api_key)
     if not data or 'id' not in data:
-        miss = {'error': f'LoRA not on CivitAI (hash {file_hash[:10]}...).'}
-        save_lora_triggers_to_cache(lora_filename, miss)
+        miss = {'error': f'{kind} not on CivitAI (hash {file_hash[:10]}...).'}
+        save_triggers_to_cache(filename, miss, kind=kind)
         return miss
 
     info = {
@@ -560,8 +582,16 @@ def fetch_lora_triggers(lora_filename, paths_loras, api_key=None, force_refresh=
     triggers = [str(w).strip() for w in (data.get('trainedWords') or []) if str(w).strip()]
 
     result = {'model_info': info, 'trainedWords': triggers}
-    save_lora_triggers_to_cache(lora_filename, result)
+    save_triggers_to_cache(filename, result, kind=kind)
     return result
+
+
+def fetch_lora_triggers(lora_filename, paths_loras, api_key=None, force_refresh=False):
+    """Legacy shim — use fetch_model_triggers(kind='lora') instead."""
+    return fetch_model_triggers(
+        filename=lora_filename, paths=paths_loras, kind='lora',
+        api_key=api_key, force_refresh=force_refresh,
+    )
 
 
 def format_lora_triggers_display(result):
@@ -598,32 +628,38 @@ def format_lora_triggers_display(result):
     return ', '.join(words)
 
 
-def fetch_lora_triggers_combined(lora_filename, paths_loras, api_key=None, force_refresh=False):
-    """Get LoRA triggers from BOTH local safetensors metadata and CivitAI, merged.
+def fetch_model_triggers_combined(filename, paths, kind='lora', api_key=None, force_refresh=False):
+    """Merge triggers from local safetensors metadata and CivitAI.
 
-    Priority: local metadata triggers appear first (ground truth from training),
-    then any CivitAI-specific trigger words not already present are appended.
-    Both sources are still cached individually; this function only merges.
+    Works for both LoRAs (kind='lora') and textual inversion embeddings
+    (kind='embedding'). Local triggers appear first (ground truth from training),
+    CivitAI-only extras are appended and deduped.
 
-    Returns dict:
+    Args:
+        filename: file basename (e.g., 'detail_tweaker_xl.safetensors').
+        paths: list of search directories for that kind.
+        kind: 'lora' or 'embedding'.
+
+    Returns:
         {
-          'local':    <result from lora_metadata.get_lora_triggers_from_file>,
-          'civitai':  <result from fetch_lora_triggers>,
-          'merged':   [...],                # deduped, ordered: local first
-          'model_info': <civitai model_info if found, else None>,
-          'sources':  ['local', 'civitai']  # which actually contributed
+          'local':    <result from lora_metadata.get_*_triggers_from_file>,
+          'civitai':  <result from fetch_model_triggers>,
+          'merged':   [...],                  # deduped, ordered: local first
+          'model_info': <civitai model_info or None>,
+          'sources':  ['local', 'civitai'],   # which actually contributed
+          'kind':     'lora' | 'embedding',
         }
     """
-    # Local read (cheap, offline)
     from modules import lora_metadata
-    local = lora_metadata.get_lora_triggers_from_file(lora_filename, paths_loras)
 
-    # CivitAI fetch (cached to disk after first hit)
-    civitai = fetch_lora_triggers(
-        lora_filename=lora_filename,
-        paths_loras=paths_loras,
-        api_key=api_key,
-        force_refresh=force_refresh,
+    if kind == 'embedding':
+        local = lora_metadata.get_embedding_triggers_from_file(filename, paths)
+    else:
+        local = lora_metadata.get_lora_triggers_from_file(filename, paths)
+
+    civitai = fetch_model_triggers(
+        filename=filename, paths=paths, kind=kind,
+        api_key=api_key, force_refresh=force_refresh,
     )
 
     merged = []
@@ -654,4 +690,13 @@ def fetch_lora_triggers_combined(lora_filename, paths_loras, api_key=None, force
         'merged': merged,
         'model_info': civitai.get('model_info'),
         'sources': sources,
+        'kind': kind,
     }
+
+
+def fetch_lora_triggers_combined(lora_filename, paths_loras, api_key=None, force_refresh=False):
+    """Legacy shim — use fetch_model_triggers_combined(kind='lora') instead."""
+    return fetch_model_triggers_combined(
+        filename=lora_filename, paths=paths_loras, kind='lora',
+        api_key=api_key, force_refresh=force_refresh,
+    )

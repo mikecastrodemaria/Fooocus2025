@@ -147,3 +147,74 @@ def get_lora_triggers_from_file(lora_filename, paths_loras):
         'source': f'local:{source}',
         'has_metadata': bool(meta),
     }
+
+
+def extract_embedding_triggers_from_metadata(meta, filename_stem):
+    """Extract likely trigger tokens for a textual inversion embedding.
+
+    For embeddings, the filename itself (without extension) IS the activation
+    token — that's always the first/primary trigger. Additional hints may
+    appear in safetensors metadata for modern trainers.
+
+    Returns:
+        (list_of_triggers, source_label)
+    """
+    triggers = []
+    if filename_stem:
+        stem = str(filename_stem).strip()
+        if stem:
+            triggers.append(stem)
+
+    if not meta:
+        return triggers, 'filename' if triggers else 'empty'
+
+    sources_used = ['filename'] if triggers else []
+
+    # Some trainers record additional tokens here
+    token_string = (meta.get('sd_embedding_tokens')
+                    or meta.get('ss_trigger_phrase')
+                    or meta.get('modelspec.trigger_phrase'))
+    if token_string:
+        for part in str(token_string).split(','):
+            p = part.strip()
+            if p and p.lower() not in {t.lower() for t in triggers}:
+                triggers.append(p)
+        sources_used.append('metadata')
+
+    if triggers:
+        return triggers, '+'.join(sources_used)
+    return [], 'no tokens found'
+
+
+def get_embedding_triggers_from_file(embedding_filename, paths_embeddings):
+    """Resolve an embedding filename to a path, extract its activation tokens.
+
+    For embeddings, the filename (without extension) is always returned as
+    the primary trigger. Any extra tokens from safetensors metadata are added.
+
+    Returns:
+        {'trainedWords': [...], 'source': 'local:<label>', 'has_metadata': bool}
+        or {'error': '...'} on failure.
+    """
+    if not embedding_filename or embedding_filename == 'None':
+        return {'error': 'No embedding selected.'}
+    try:
+        filepath = get_file_from_folder_list(embedding_filename, paths_embeddings)
+    except Exception as e:
+        return {'error': f'Cannot locate embedding on disk: {e}'}
+    if not filepath or not os.path.isfile(filepath):
+        return {'error': f'Embedding file not found: {embedding_filename}'}
+
+    stem = os.path.splitext(os.path.basename(embedding_filename))[0]
+
+    # Only safetensors has structured metadata. .pt / .bin files get filename only.
+    meta = {}
+    if filepath.lower().endswith('.safetensors'):
+        meta = read_safetensors_metadata(filepath)
+
+    triggers, source = extract_embedding_triggers_from_metadata(meta, stem)
+    return {
+        'trainedWords': triggers,
+        'source': f'local:{source}',
+        'has_metadata': bool(meta),
+    }

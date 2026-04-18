@@ -868,6 +868,10 @@ def save_preset_to_file(preset_name, current_values, overwrite=False):
     if 'loras' in current_values:
         preset_data['default_loras'] = current_values['loras']
 
+    # Handle Embeddings (custom-4 fork extension)
+    if 'embeddings' in current_values:
+        preset_data['default_embeddings'] = current_values['embeddings']
+
     # Add download references from current config if available
     if 'default_model' in preset_data:
         model_name = preset_data['default_model']
@@ -928,6 +932,7 @@ model_filenames = []
 lora_filenames = []
 vae_filenames = []
 wildcard_filenames = []
+embedding_filenames = []
 
 
 def get_model_filenames(folder_paths, extensions=None, name_filter=None):
@@ -944,11 +949,13 @@ def get_model_filenames(folder_paths, extensions=None, name_filter=None):
 
 
 def update_files():
-    global model_filenames, lora_filenames, vae_filenames, wildcard_filenames, available_presets
+    global model_filenames, lora_filenames, vae_filenames, wildcard_filenames, embedding_filenames, available_presets
     model_filenames = get_model_filenames(paths_checkpoints)
     lora_filenames = get_model_filenames(paths_loras)
     vae_filenames = get_model_filenames(path_vae)
     wildcard_filenames = get_files_from_folder(path_wildcards, ['.txt'])
+    embedding_filenames = get_model_filenames(
+        [path_embeddings], extensions=['.safetensors', '.pt', '.bin'])
     available_presets = get_presets()
     return
 
