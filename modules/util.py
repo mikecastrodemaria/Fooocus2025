@@ -28,6 +28,43 @@ LORAS_PROMPT_PATTERN = re.compile(r"(<lora:([^:]+):([+-]?(?:\d+(?:\.\d*)?|\.\d+)
 HASH_SHA256_LENGTH = 10
 
 
+def compute_custom_wh(ratio_w, ratio_h, mode: str, size) -> Tuple[int, int]:
+    """custom-7: compute (width, height) for a custom ratio + size, snapped to /64.
+
+    mode: 'Max edge' | '~1 MP target' | 'Min edge'
+    Returns ints, both >= 64, both multiples of 64.
+    """
+    try:
+        rw = max(1, int(round(float(ratio_w))))
+        rh = max(1, int(round(float(ratio_h))))
+        sz = max(64, int(round(float(size))))
+    except (TypeError, ValueError):
+        return 1024, 1024
+
+    if mode == '~1 MP target':
+        scale = math.sqrt(rw * rh)
+        w = sz * rw / scale
+        h = sz * rh / scale
+    elif mode == 'Min edge':
+        if rw <= rh:
+            w = sz
+            h = sz * rh / rw
+        else:
+            h = sz
+            w = sz * rw / rh
+    else:  # 'Max edge' (default)
+        if rw >= rh:
+            w = sz
+            h = sz * rh / rw
+        else:
+            h = sz
+            w = sz * rw / rh
+
+    w = max(64, int(round(w / 64.0)) * 64)
+    h = max(64, int(round(h / 64.0)) * 64)
+    return w, h
+
+
 def erode_or_dilate(x, k):
     k = int(k)
     if k > 0:

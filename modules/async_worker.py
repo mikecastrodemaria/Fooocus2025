@@ -77,6 +77,27 @@ class AsyncTask:
         self.mixing_image_prompt_and_vary_upscale = args.pop()
         self.mixing_image_prompt_and_inpaint = args.pop()
         self.use_aspect_for_vary = args.pop()  # custom-6: force Aspect Ratios for Vary/Upscale
+        # custom-7: custom resolution override (5 args, kept together for clarity)
+        self.custom_res_enabled = bool(args.pop())
+        self.custom_ratio_w = args.pop()
+        self.custom_ratio_h = args.pop()
+        self.custom_res_mode = args.pop()
+        self.custom_res_size = args.pop()
+        # Safety net: 'Custom' is the dropdown sentinel; if the hidden checkbox
+        # somehow didn't sync, treat the sentinel as enabled to avoid parsing
+        # 'Custom' as a W×H string downstream and crashing.
+        if str(self.aspect_ratios_selection).strip().lower() == 'custom':
+            self.custom_res_enabled = True
+        if self.custom_res_enabled:
+            from modules.util import compute_custom_wh
+            _cw, _ch = compute_custom_wh(self.custom_ratio_w, self.custom_ratio_h,
+                                         self.custom_res_mode, self.custom_res_size)
+            print(f'[custom-7] Custom resolution active: {_cw}x{_ch} '
+                  f'(ratio {self.custom_ratio_w}:{self.custom_ratio_h}, '
+                  f'mode={self.custom_res_mode}, size={self.custom_res_size})')
+            # Synthesize aspect_ratios_selection so the existing parsers
+            # at lines 458 (vary) and 1135 (main) pick up the override transparently.
+            self.aspect_ratios_selection = f'{_cw}×{_ch}'
         self.debugging_cn_preprocessor = args.pop()
         self.skipping_cn_preprocessor = args.pop()
         self.canny_low_threshold = args.pop()

@@ -4,7 +4,7 @@
 
 # Fooocus 2025 — Custom Fork
 
-> A personal fork of **[lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5** with a series of quality-of-life features: a **Save Preset** button, **CivitAI Model Settings** integration (checkpoint triggers, consensus settings, save-as-preset), **LoRA trigger words** from local metadata + CivitAI, **Embeddings panel** with bulk-insert, **Wildcards editor**, **Vary-with-aspect-ratio** override, and a real **Restart UI** button.
+> Version **`2026.1.0`** · A personal fork of **[lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5** with a series of quality-of-life features: a **Save Preset** button, **CivitAI Model Settings** integration (checkpoint triggers, consensus settings, save-as-preset), **LoRA trigger words** from local metadata + CivitAI, **Embeddings panel** with bulk-insert, **Wildcards editor**, **Vary-with-aspect-ratio** override, **Custom Resolution** (any ratio + size, snapped to /64), and a real **Restart UI** button.
 
 ![Fooocus2025 fork — Models tab showing CivitAI / LoRA / Embeddings / Wildcards accordions and Restart UI, with wildcards in the prompt](docs/screenshots/overview.png)
 
@@ -62,10 +62,16 @@ CivitAI responses are cached in `civitai_cache/<lora_name>.lora.civitai.json` (g
 **How to use:**
 1. Select an embedding in any slot. Its activation token appears in the read-only field below the row (auto-detected — the filename stem, plus any extra tokens from safetensors metadata or CivitAI).
 2. Set a weight (default 1.0).
-3. Click **📋 Prompt** or **📋 Negative** — the token `(embedding:<name>:<weight>)` is appended to the chosen textbox, **followed by any extra CivitAI/metadata trigger words** that aren't the filename itself. All deduped against what's already there.
+3. Click **📋 Prompt** or **📋 Negative**. What gets inserted:
+   - The token `(embedding:<name>:<weight>)`.
+   - The **canonical keyword** (the filename stem, with any Windows-duplicate ` (N)` suffix stripped — so `lazyneg (1).safetensors` produces `lazyneg`).
+   - Any **extra CivitAI / metadata trigger words** that differ from the canonical keyword.
+   - Everything deduped against what's already in the textbox.
 4. Or fill multiple slots and use **📋 Insert ALL active embeddings to prompt / negative** to inject all *included* slots at once.
 
 The **Include** checkbox per slot only filters the Insert-ALL bulk button — embeddings activate purely from their token being in the text, not from any enable flag. The per-slot buttons always work regardless of the checkbox.
+
+> 🩹 *(custom-7) Fix:* embeddings whose filename ends with the Windows-duplicate marker ` (1)` / ` (2)` / … no longer produce a duplicate trigger word. The canonical name (without the suffix) is appended once; the suffixed variant returned by CivitAI / local metadata is recognised as the same token and dropped.
 
 Uses the same local-metadata + CivitAI merged-triggers pipeline as the LoRA feature (`fetch_model_triggers_combined(kind='embedding')`). Cache: `civitai_cache/<name>.embedding.civitai.json`.
 
@@ -128,7 +134,41 @@ Unchecked → original upstream behaviour (preserves input's native aspect). Doe
 
 ---
 
-### 7. 🔄 Restart UI button
+### 7. 📏 Aspect Ratios dropdown + Custom Resolution
+**Where:** Advanced tab → Aspect Ratios accordion.
+
+**What changed (UI):** the Aspect Ratios picker is now a **dropdown list** (instead of the upstream radio grid), with **`Custom`** as the first entry. Picking any preset works exactly like before; picking `Custom` reveals the resolution panel below.
+
+**What Custom does:** Pick **any** aspect ratio + size on the fly without editing `config.txt` or restarting. Result is always snapped to multiples of 64 (the SDXL hard requirement). Useful for one-off ratios that aren't worth permanently adding to the dropdown — 16:9 banners, 4:5 IG portraits, 21:9 cinema, A4-ratio prints, etc.
+
+**How to use:**
+1. Expand the **Aspect Ratios** accordion.
+2. Open the dropdown and pick **`Custom`** — the resolution panel unfolds below.
+3. Either type a ratio in the **Ratio W** / **Ratio H** fields, or click one of the **quick chips** (3-column × 2-row grid):
+
+   | | | |
+   |---|---|---|
+   | `1:1` | `3:2` | `4:3` |
+   | `16:9` | `21:9` | `√2 (A4)` |
+
+   Click **🔄 Swap** to flip W ↔ H (landscape ↔ portrait).
+4. Pick a **Mode** — controls what the size slider means:
+   - **Max edge** (default) — the longer side equals the slider value.
+   - **~1 MP target** — total pixels stay near `size²` regardless of ratio (matches SDXL's training sweet-spot).
+   - **Min edge** — the shorter side equals the slider value.
+5. Adjust the **Size** slider (512–2048, step 64).
+6. Read the live result line: `→ 1344 × 768 · 1.03 MP · 7:4`. A warning appears (non-blocking) if the result drops below 0.25 MP or exceeds 2 MP.
+7. **Generate** — Vary, Upscale, Inpaint and the standard text-to-image path all pick up the override transparently.
+
+**💾 Save as preset entry** — one-click button that appends the computed `W*H` to `available_aspect_ratios` in `config.txt`. After the next restart the resolution shows up directly in the Aspect Ratios dropdown, so you don't have to re-dial it every session.
+
+**Preset round-trip:** `save_preset_to_file` writes a `custom_resolution: {enabled, ratio_w, ratio_h, mode, size}` block into preset JSONs. Old presets without the block default to OFF (full back-compat). The block is invisible to vanilla Fooocus, so cross-loading a Fooocus2025 preset on upstream Fooocus is safe.
+
+**Compose with custom-6:** select **`Custom`** in the Aspect Ratios dropdown AND tick **Use Aspect Ratio for Vary** to force Vary outputs to your custom W × H — handy for re-framing source images to arbitrary print/social formats.
+
+---
+
+### 8. 🔄 Restart UI button
 **Where:** bottom of the Advanced tab, next to **Refresh All Files**.
 
 **What it does:** Exits the Python process with code `42`. The included `.bat` launchers detect that exit code and relaunch automatically — a real restart (re-reads `config.txt`, re-imports modules, re-loads the model). Takes ~30 s on an RTX 5090; refresh the browser tab once the Gradio server is back.
@@ -175,9 +215,13 @@ The install root of the original package can include launcher scripts tuned for 
 ## 📁 Files touched by this fork
 | File | Purpose |
 |---|---|
-| `modules/civitai_api.py` | **New** — CivitAI client, caching, and consensus aggregation |
-| `modules/config.py` | UI config wiring for both features + API key persistence |
-| `webui.py` | UI elements (Save Preset button, CivitAI panel) |
+| `fooocus_version.py` | Version bumped to `2026.1.0` (CalVer) |
+| `modules/civitai_api.py` | **New** — CivitAI client, caching, consensus aggregation, model+embedding triggers |
+| `modules/lora_metadata.py` | **New** — local safetensors metadata reader for LoRA/embedding triggers |
+| `modules/util.py` | Adds `compute_custom_wh()` — ratio + size → snapped W×H (custom-7) |
+| `modules/config.py` | Save Preset / preset round-trip (LoRAs, embeddings, custom resolution) + API key persistence |
+| `modules/async_worker.py` | Reads `use_aspect_for_vary` (custom-6) and `custom_resolution` (custom-7) flags |
+| `webui.py` | All fork UI: Save Preset, CivitAI / LoRA / Embeddings / Wildcards accordions, Aspect-for-Vary, Custom Resolution panel, Restart UI |
 | `CHANGELOG.md` | Per-release fork history |
 | `.gitignore` | Excludes `civitai_cache/`, local presets, assistant artifacts |
 

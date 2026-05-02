@@ -794,10 +794,15 @@ if REWRITE_PRESET and isinstance(args_manager.args.preset, str):
 
 
 def remove_ratio(x):
-    """Convert display ratio '1152×896 <span ...>...' back to '1152*896' for preset storage."""
-    if isinstance(x, str) and '\u00d7' in x:
-        clean = x.split('<')[0].strip()
-        return clean.replace('\u00d7', '*')
+    """Convert display ratio back to '1152*896' for preset storage.
+
+    Handles both the legacy HTML form ('1152×896 <span ...>...') and the
+    custom-7 plain-text form ('1152×896 ∣ 9:7').
+    """
+    if isinstance(x, str) and '×' in x:
+        clean = x.split('<')[0]              # legacy: drop HTML span
+        clean = clean.split('∣')[0]    # custom-7: drop ' ∣ N:M' suffix
+        return clean.strip().replace('×', '*')
     return x
 
 
@@ -872,6 +877,21 @@ def save_preset_to_file(preset_name, current_values, overwrite=False):
     if 'embeddings' in current_values:
         preset_data['default_embeddings'] = current_values['embeddings']
 
+    # Handle Custom Resolution (custom-7 fork extension).
+    # Stored as a single optional dict so back-compat with vanilla Fooocus
+    # presets is preserved (key is ignored if not in the allowlist).
+    if 'custom_res_enabled' in current_values:
+        try:
+            preset_data['custom_resolution'] = {
+                'enabled': bool(current_values.get('custom_res_enabled', False)),
+                'ratio_w': int(round(float(current_values.get('custom_ratio_w', 16)))),
+                'ratio_h': int(round(float(current_values.get('custom_ratio_h', 9)))),
+                'mode': str(current_values.get('custom_res_mode', 'Max edge')),
+                'size': int(round(float(current_values.get('custom_res_size', 1024)))),
+            }
+        except (TypeError, ValueError):
+            pass
+
     # Add download references from current config if available
     if 'default_model' in preset_data:
         model_name = preset_data['default_model']
@@ -902,10 +922,13 @@ def get_user_presets():
 
 
 def add_ratio(x):
+    # custom-7: returns clean plain text (no <span>) so the value is identical
+    # whether rendered in a Radio (with viewer.js HTML-unwrap) or a Dropdown
+    # (which only renders plain text). Layout: '1152×896 ∣ 9:7'.
     a, b = x.replace('*', ' ').split(' ')[:2]
     a, b = int(a), int(b)
     g = math.gcd(a, b)
-    return f'{a}×{b} <span style="color: grey;"> \U00002223 {a // g}:{b // g}</span>'
+    return f'{a}×{b} ∣ {a // g}:{b // g}'
 
 
 default_aspect_ratio = add_ratio(default_aspect_ratio)

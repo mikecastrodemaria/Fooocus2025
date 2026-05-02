@@ -579,11 +579,20 @@ with shared.gradio_root:
                                                  elem_classes=['performance_selection'])
 
                 with gr.Accordion(label='Aspect Ratios', open=False, elem_id='aspect_ratios_accordion') as aspect_ratios_accordion:
-                    aspect_ratios_selection = gr.Radio(label='Aspect Ratios', show_label=False,
-                                                       choices=modules.config.available_aspect_ratios_labels,
-                                                       value=modules.config.default_aspect_ratio,
-                                                       info='width × height',
-                                                       elem_classes='aspect_ratios')
+                    # custom-7: Aspect Ratios as a Dropdown with 'Custom' as the first
+                    # option. add_ratio() now returns plain text (no <span>), so we can
+                    # pass the labels directly as Dropdown string choices — Gradio 3.41
+                    # does not support (label, value) tuples cleanly, so plain strings
+                    # are required.
+                    _CUSTOM_AR_SENTINEL = 'Custom'
+                    _ar_choices = [_CUSTOM_AR_SENTINEL] + list(modules.config.available_aspect_ratios_labels)
+                    aspect_ratios_selection = gr.Dropdown(
+                        label='Aspect Ratios', show_label=False,
+                        choices=_ar_choices,
+                        value=modules.config.default_aspect_ratio,
+                        info='Pick a preset, or "Custom" to use the inputs below.',
+                        elem_classes='aspect_ratios',
+                        interactive=True)
 
                     aspect_ratios_selection.change(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, _js='(x)=>{refresh_aspect_ratios_label(x);}')
                     shared.gradio_root.load(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, _js='(x)=>{refresh_aspect_ratios_label(x);}')
@@ -594,6 +603,134 @@ with shared.gradio_root:
                         info='When enabled, Vary (Subtle/Strong) outputs use the Aspect Ratio above instead '
                              'of the input image\u2019s native size. The input is centre-cropped and resized to fit. '
                              'Does not affect Upscale (which keeps its fixed factor).')
+
+                    # === custom-7: Custom Resolution =====================================
+                    # custom_res_enabled is hidden — its value is now driven by the
+                    # 'Custom' selection in the Aspect Ratios dropdown above. Kept in the
+                    # ctrls list so the worker still receives the explicit flag.
+                    custom_res_enabled = gr.Checkbox(value=False, visible=False)
+                    with gr.Column(visible=False) as custom_res_panel:
+                        with gr.Row():
+                            custom_ratio_w = gr.Number(label='Ratio W', value=16, precision=0,
+                                                        minimum=1, maximum=9999, scale=1)
+                            custom_ratio_h = gr.Number(label='Ratio H', value=9, precision=0,
+                                                        minimum=1, maximum=9999, scale=1)
+                            custom_res_swap = gr.Button(value='\U0001F504 Swap', scale=0)
+                        custom_res_mode = gr.Radio(
+                            label='Mode',
+                            choices=['Max edge', '~1 MP target', 'Min edge'],
+                            value='Max edge',
+                            info='Max/Min edge sizes the longer/shorter side; ~1 MP keeps total area near size\u00b2.')
+                        custom_res_size = gr.Slider(
+                            label='Size (px, snapped to /64)',
+                            minimum=512, maximum=2048, step=64, value=1024)
+                        custom_res_display = gr.HTML(value='', elem_id='custom_res_display')
+                        gr.HTML('<div style="font-size:11px;color:#888;margin-top:-4px;">Quick ratios:</div>')
+                        # 3-column grid, 2 rows; small buttons with tight min-width.
+                        _ratio_chips = [('1:1', 1, 1), ('3:2', 3, 2), ('4:3', 4, 3),
+                                         ('16:9', 16, 9), ('21:9', 21, 9), ('\u221a2 (A4)', 1000, 1414)]
+                        _chip_buttons = []
+                        for _i in range(0, len(_ratio_chips), 3):
+                            with gr.Row():
+                                for _label, _rw, _rh in _ratio_chips[_i:_i + 3]:
+                                    _btn = gr.Button(value=_label, size='sm', min_width=50)
+                                    _chip_buttons.append((_btn, _rw, _rh))
+                        custom_res_save_entry = gr.Button(
+                            value='\U0001F4BE Save as preset entry (config.txt)',
+                            variant='secondary')
+                        custom_res_save_status = gr.HTML(value='')
+
+                    def _format_custom_res_display(rw, rh, mode, size):
+                        try:
+                            from modules.util import compute_custom_wh
+                            import math as _math
+                            ww, hh = compute_custom_wh(rw, rh, mode, size)
+                            mp = (ww * hh) / 1_000_000.0
+                            rw_i = max(1, int(round(float(rw or 1))))
+                            rh_i = max(1, int(round(float(rh or 1))))
+                            g = _math.gcd(rw_i, rh_i)
+                            warn = ''
+                            if mp < 0.25:
+                                warn = ' &middot; <span style="color:#c80;">low MP, quality may drop</span>'
+                            elif mp > 2.0:
+                                warn = ' &middot; <span style="color:#c80;">high MP, may OOM</span>'
+                            return (f'<div style="margin:4px 0;font-size:13px;">\u2192 '
+                                    f'<b>{ww} \u00d7 {hh}</b> &middot; {mp:.2f} MP &middot; '
+                                    f'{rw_i // g}:{rh_i // g}{warn}</div>')
+                        except Exception as _e:
+                            return f'<div style="color:#c66;">Invalid input: {_e}</div>'
+
+                    # Drive custom_res_enabled + panel visibility from the Aspect Ratios
+                    # dropdown: selecting 'Custom' shows the panel and flags the worker.
+                    def _on_aspect_dropdown_change(value):
+                        is_custom = (str(value).strip() == _CUSTOM_AR_SENTINEL)
+                        return gr.update(value=is_custom), gr.update(visible=is_custom)
+
+                    aspect_ratios_selection.change(
+                        _on_aspect_dropdown_change,
+                        inputs=aspect_ratios_selection,
+                        outputs=[custom_res_enabled, custom_res_panel],
+                        queue=False, show_progress=False)
+                    shared.gradio_root.load(
+                        _on_aspect_dropdown_change,
+                        inputs=aspect_ratios_selection,
+                        outputs=[custom_res_enabled, custom_res_panel],
+                        queue=False, show_progress=False)
+
+                    _custom_res_compute_inputs = [custom_ratio_w, custom_ratio_h,
+                                                   custom_res_mode, custom_res_size]
+                    for _comp in _custom_res_compute_inputs:
+                        _comp.change(_format_custom_res_display,
+                                     inputs=_custom_res_compute_inputs,
+                                     outputs=custom_res_display,
+                                     queue=False, show_progress=False)
+                    shared.gradio_root.load(_format_custom_res_display,
+                                             inputs=_custom_res_compute_inputs,
+                                             outputs=custom_res_display,
+                                             queue=False, show_progress=False)
+
+                    custom_res_swap.click(
+                        lambda w, h: (h, w),
+                        inputs=[custom_ratio_w, custom_ratio_h],
+                        outputs=[custom_ratio_w, custom_ratio_h],
+                        queue=False, show_progress=False)
+
+                    for _btn, _rw, _rh in _chip_buttons:
+                        _btn.click(
+                            (lambda rw=_rw, rh=_rh: (rw, rh)),
+                            inputs=[],
+                            outputs=[custom_ratio_w, custom_ratio_h],
+                            queue=False, show_progress=False)
+
+                    def _save_custom_as_entry(rw, rh, mode, size):
+                        try:
+                            from modules.util import compute_custom_wh
+                            ww, hh = compute_custom_wh(rw, rh, mode, size)
+                            new_entry = f'{ww}*{hh}'
+                            cfg = modules.config.config_dict
+                            existing = list(cfg.get('available_aspect_ratios',
+                                                     modules.config.available_aspect_ratios))
+                            if new_entry in existing:
+                                return (f'<span style="color:#aaa;">\u2139 {new_entry} already in list. '
+                                        f'Restart to use it from the Aspect Ratios block.</span>')
+                            existing.append(new_entry)
+                            cfg['available_aspect_ratios'] = existing
+                            try:
+                                with open(modules.config.config_path, 'w', encoding='utf-8') as f:
+                                    json.dump(cfg, f, indent=4, ensure_ascii=False)
+                            except Exception as e:
+                                return f'<span style="color:#c66;">Could not write config.txt: {e}</span>'
+                            return (f'<span style="color:#4ecdc4;">\u2713 Added {new_entry} to '
+                                    f'available_aspect_ratios. Restart Fooocus to see it in the radio block.</span>')
+                        except Exception as e:
+                            return f'<span style="color:#c66;">Error: {e}</span>'
+
+                    custom_res_save_entry.click(
+                        _save_custom_as_entry,
+                        inputs=_custom_res_compute_inputs,
+                        outputs=custom_res_save_status,
+                        queue=False, show_progress=False)
+                    # === end custom-7 ====================================================
 
                 image_number = gr.Slider(label='Image Number', minimum=1, maximum=modules.config.default_max_image_number, step=1, value=modules.config.default_image_number)
 
@@ -1121,6 +1258,9 @@ with shared.gradio_root:
                         prompt, negative_prompt,
                         style_selections, aspect_ratios_selection,
                         vae_name,
+                        # custom-7: custom resolution
+                        custom_res_enabled, custom_ratio_w, custom_ratio_h,
+                        custom_res_mode, custom_res_size,
                     ] + lora_ctrls + embedding_ctrls
 
                     def _collect_current_values(preset_name, overwrite_target,
@@ -1132,6 +1272,8 @@ with shared.gradio_root:
                                                  prompt_v, negative_prompt_v,
                                                  styles_v, aspect_ratio_v,
                                                  vae_name_v,
+                                                 custom_res_enabled_v, custom_ratio_w_v, custom_ratio_h_v,
+                                                 custom_res_mode_v, custom_res_size_v,
                                                  *lora_and_embedding_args):
                         """Collect all current UI values into a dict for save_preset_to_file."""
                         current = {
@@ -1153,6 +1295,12 @@ with shared.gradio_root:
                             'style_selections': styles_v,
                             'aspect_ratios_selection': aspect_ratio_v,
                             'vae_name': vae_name_v,
+                            # custom-7
+                            'custom_res_enabled': custom_res_enabled_v,
+                            'custom_ratio_w': custom_ratio_w_v,
+                            'custom_ratio_h': custom_ratio_h_v,
+                            'custom_res_mode': custom_res_mode_v,
+                            'custom_res_size': custom_res_size_v,
                         }
 
                         all_args = list(lora_and_embedding_args)
@@ -1602,20 +1750,41 @@ with shared.gradio_root:
                         return f'(embedding:{stem}:1.0)'
                     return f'(embedding:{stem}:{round(w, 2)})'
 
+                _emb_dup_suffix_re = __import__('re').compile(r'\s*\(\d+\)\s*$')
+
+                def _normalize_emb_token(s):
+                    """Lowercase + strip Windows-duplicate suffixes like ' (1)', ' (2)'.
+
+                    Same file copied as 'foo.safetensors' and 'foo (1).safetensors' in the
+                    embeddings folder produces the suffixed stem, while CivitAI returns the
+                    canonical 'foo'. Without this normalisation both end up appended to the
+                    prompt as separate trigger words.
+                    """
+                    if not s:
+                        return ''
+                    return _emb_dup_suffix_re.sub('', str(s).strip()).lower()
+
                 def _extract_extra_trigger_words(trigger_text, emb_stem):
                     """Return trigger-display words that aren't the filename stem itself
                     and aren't one of the placeholder '(...)' hints.
+
+                    Stems and candidates are compared after stripping a trailing
+                    Windows-duplicate marker (' (N)'), so a CivitAI canonical
+                    'neg_realism512' deduplicates against a local 'neg_realism512 (1)'.
                     """
                     if not trigger_text or trigger_text.startswith('('):
                         return []
-                    stem_lc = (emb_stem or '').strip().lower()
+                    stem_norm = _normalize_emb_token(emb_stem)
+                    seen = {stem_norm} if stem_norm else set()
                     words = []
                     for w in trigger_text.split(','):
                         w = w.strip()
                         if not w:
                             continue
-                        if w.lower() == stem_lc:
+                        key = _normalize_emb_token(w)
+                        if key in seen:
                             continue
+                        seen.add(key)
                         words.append(w)
                     return words
 
@@ -1636,12 +1805,24 @@ with shared.gradio_root:
                     sep = '' if not current_text else (', ' if not current_text.rstrip().endswith(',') else ' ')
                     return gr.update(value=current_text + sep + ', '.join(to_add))
 
+                def _emb_canonical_keyword(stem):
+                    """Stem with the Windows-duplicate ' (N)' suffix stripped — what
+                    we want to insert as a bare keyword alongside the embedding tag.
+                    """
+                    if not stem:
+                        return ''
+                    return _emb_dup_suffix_re.sub('', str(stem)).strip()
+
                 def _append_embedding_slot_to_textbox(emb_name, weight, trigger_text, current_text):
                     token = _format_embedding_token(emb_name, weight)
                     if not token:
                         return gr.update()
                     stem = os.path.splitext(os.path.basename(str(emb_name)))[0]
-                    items = [token] + _extract_extra_trigger_words(trigger_text, stem)
+                    canonical = _emb_canonical_keyword(stem)
+                    items = [token]
+                    if canonical:
+                        items.append(canonical)
+                    items.extend(_extract_extra_trigger_words(trigger_text, stem))
                     return _append_with_dedup(current_text, items)
 
                 for _btn, _dd, _wt, _disp in zip(embedding_insert_prompt_btns, embedding_dropdowns, embedding_weights, embedding_trigger_displays):
@@ -1675,6 +1856,9 @@ with shared.gradio_root:
                             continue
                         items.append(tok)
                         stem = os.path.splitext(os.path.basename(str(nm)))[0]
+                        canonical = _emb_canonical_keyword(stem)
+                        if canonical:
+                            items.append(canonical)
                         items.extend(_extract_extra_trigger_words(tt, stem))
                     return _append_with_dedup(current_text, items)
 
@@ -1904,6 +2088,7 @@ with shared.gradio_root:
         ctrls += [overwrite_step, overwrite_switch, overwrite_width, overwrite_height, overwrite_vary_strength]
         ctrls += [overwrite_upscale_strength, mixing_image_prompt_and_vary_upscale, mixing_image_prompt_and_inpaint]
         ctrls += [use_aspect_for_vary]  # custom-6: force aspect-ratio for Vary/Upscale
+        ctrls += [custom_res_enabled, custom_ratio_w, custom_ratio_h, custom_res_mode, custom_res_size]  # custom-7: custom resolution override
         ctrls += [debugging_cn_preprocessor, skipping_cn_preprocessor, canny_low_threshold, canny_high_threshold]
         ctrls += [refiner_swap_method, controlnet_softness]
         ctrls += freeu_ctrls
