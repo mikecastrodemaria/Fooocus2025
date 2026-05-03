@@ -512,3 +512,127 @@ def maybe_start_boot_scan() -> None:
         daemon=True,
     ).start()
     print('[asset-browser] boot scan thread started.')
+
+
+# --------------------------------------------------------------------------
+# CivitAI preview fetcher (custom-8.x — UI-triggered from the SPA lightbox)
+# --------------------------------------------------------------------------
+
+_KIND_TO_PATHS = {
+    'loras':        lambda: modules.config.paths_loras,
+    'checkpoints':  lambda: modules.config.paths_checkpoints,
+    'embeddings':   lambda: [modules.config.path_embeddings],
+}
+_KIND_TO_CIVIT_KIND = {'loras': 'lora', 'checkpoints': 'checkpoint', 'embeddings': 'embedding'}
+
+
+def fetch_civitai_preview_for(kind: str, rel_filename: str, api_key: str = None) -> dict:
+    """Fetch the first CivitAI image for a model with no sidecar preview.
+    Saves it as `<model_dir>/<stem>.preview.png` (A1111/ComfyUI convention).
+
+    Returns a dict the SPA can consume:
+        {success: bool, message: str, kind: str, rel_path: str}
+    On success the model's manifest is rebuilt so the next reload picks
+    up the new preview without a full Reindex.
+    """
+    if kind not in _KIND_TO_PATHS:
+        return {'success': False, 'message': f'Unknown kind: {kind!r}',
+                'kind': kind, 'rel_path': rel_filename}
+    if not _enabled():
+        return {'success': False, 'message': 'Asset Browser is disabled.',
+                'kind': kind, 'rel_path': rel_filename}
+
+    paths = _KIND_TO_PATHS[kind]()
+    full = _resolve_full_path(rel_filename, paths)
+    if not full:
+        return {'success': False, 'message': f'Model not found on disk: {rel_filename}',
+                'kind': kind, 'rel_path': rel_filename}
+
+    # Refuse to overwrite an existing sidecar — that would silently destroy
+    # a user's hand-curated preview. The user can delete it first if intended.
+    if _find_sidecar_preview(full):
+        return {'success': False,
+                'message': 'A sidecar preview already exists. Delete it first to re-fetch.',
+                'kind': kind, 'rel_path': rel_filename}
+
+    api_key = api_key or getattr(modules.config, 'civitai_api_key', None) or None
+
+    try:
+        from modules import civitai_api
+        sha = civitai_api._get_full_sha256(full)
+        if not sha:
+            return {'success': False, 'message': 'Could not hash the model file.',
+                    'kind': kind, 'rel_path': rel_filename}
+        version = civitai_api.get_model_version_by_hash(sha, api_key=api_key)
+        if not version:
+            return {'success': False, 'message': 'Not found on CivitAI (hash unknown).',
+                    'kind': kind, 'rel_path': rel_filename}
+        version_id = version.get('modelVersionId') or version.get('id')
+        if not version_id:
+            return {'success': False, 'message': 'CivitAI returned no version id.',
+                    'kind': kind, 'rel_path': rel_filename}
+        images = civitai_api.get_top_images(version_id, api_key=api_key, limit=5)
+        if not images:
+            return {'success': False, 'message': 'CivitAI has no images for this model.',
+                    'kind': kind, 'rel_path': rel_filename}
+        # Pick the first usable URL (most-reactions sort).
+        img_url = None
+        for it in images:
+            u = it.get('url') if isinstance(it, dict) else None
+            if u:
+                img_url = u
+                break
+        if not img_url:
+            return {'success': False, 'message': 'CivitAI returned no usable image URL.',
+                    'kind': kind, 'rel_path': rel_filename}
+    except Exception as e:
+        return {'success': False, 'message': f'CivitAI lookup failed: {e}',
+                'kind': kind, 'rel_path': rel_filename}
+
+    # Download → re-encode as PNG to normalise format (CivitAI may serve JPEG/WebP).
+    try:
+        import urllib.request
+        from io import BytesIO
+        from PIL import Image
+        req = urllib.request.Request(img_url, headers={'User-Agent': 'Fooocus2025/asset-browser'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+        im = Image.open(BytesIO(data)).convert('RGB')
+        stem = os.path.splitext(os.path.basename(full))[0]
+        target_dir = os.path.dirname(full)
+        target_path = os.path.join(target_dir, f'{stem}.preview.png')
+        im.save(target_path, 'PNG', optimize=True)
+        print(f'[asset-browser] fetched CivitAI preview for {rel_filename} -> {target_path}')
+    except Exception as e:
+        return {'success': False, 'message': f'Download/save failed: {e}',
+                'kind': kind, 'rel_path': rel_filename}
+
+    # Invalidate the cached thumbnail / full copy for this model so the next
+    # rebuild sees the new sidecar instead of the stale placeholder cache.
+    try:
+        cache_id = _hash_id(rel_filename)
+        for stale in [
+            os.path.join(_previews_dir(kind), f'{cache_id}.jpg'),
+            os.path.join(_previews_dir(kind), f'{cache_id}_full.png'),
+            os.path.join(_previews_dir(kind), f'{cache_id}_full.jpg'),
+            os.path.join(_outputs_root(), PREVIEWS_DIR_NAME, PLACEHOLDER_DIR_NAME, f'{cache_id}.png'),
+        ]:
+            if os.path.isfile(stale):
+                try: os.remove(stale)
+                except Exception: pass
+    except Exception:
+        pass
+
+    # Rebuild the manifest for this kind so the SPA picks up preview_full + thumb.
+    try:
+        rebuilders = {'loras': scan_loras, 'checkpoints': scan_checkpoints, 'embeddings': scan_embeddings}
+        items = rebuilders[kind]()
+        _write_manifest(f'{kind}.json', items)
+    except Exception as e:
+        return {'success': True,
+                'message': f'Preview saved, but manifest rebuild failed: {e}. Click Reindex to refresh.',
+                'kind': kind, 'rel_path': rel_filename}
+
+    return {'success': True,
+            'message': f'Preview fetched: {os.path.basename(target_path)}',
+            'kind': kind, 'rel_path': rel_filename}

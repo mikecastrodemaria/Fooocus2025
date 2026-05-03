@@ -176,6 +176,17 @@
   .pswp__dynamic-caption .copy-row button.ok {
     background: var(--accent-2); color: #000; border-color: var(--accent-2);
   }
+  /* Highlighted "Fetch from CivitAI" — call-to-action when no sidecar preview. */
+  .pswp__dynamic-caption .copy-row button.fetch-civitai-btn {
+    background: rgba(187,134,252,0.25); color: var(--accent);
+    border-color: var(--accent); font-weight: 600;
+  }
+  .pswp__dynamic-caption .copy-row button.fetch-civitai-btn:hover:not(:disabled) {
+    background: var(--accent); color: #000;
+  }
+  .pswp__dynamic-caption .copy-row button.fetch-civitai-btn:disabled {
+    opacity: 0.7; cursor: wait;
+  }
   .pswp__dynamic-caption .triggers, .pswp__dynamic-caption code {
     background: #111; padding: 6px 8px; border-radius: 4px; display: block;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -405,6 +416,70 @@ function getLightbox(kind, captionRenderer) {
   return lb;
 }
 
+// --------- Fetch CivitAI preview helper (calls Fooocus API endpoint) ----------
+// Only available when the SPA is served via HTTP (i.e. opened from Fooocus).
+// In standalone file:// mode the Fetch button is hidden (HAS_FOOOCUS = false).
+const HAS_FOOOCUS = (window.location.protocol === 'http:' || window.location.protocol === 'https:');
+
+function fetchCivitaiPreviewBtnHtml(kind, relPath) {
+  if (!HAS_FOOOCUS) return '';   // standalone mode — no Fooocus to call
+  const k = escapeHtml(kind);
+  const r = escapeHtml(relPath);
+  return `<button class="fetch-civitai-btn" data-fetch-kind="${k}" data-fetch-rel="${r}"
+            title="Download the top CivitAI image for this model and save it as a sidecar preview.">
+            🌐 Fetch from CivitAI
+          </button>`;
+}
+
+async function fetchCivitaiPreview(kind, relPath, btn) {
+  if (!btn) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Fetching from CivitAI…';
+  // Try Gradio's /run/<api_name> first, fall back to /api/<api_name>.
+  const body = JSON.stringify({ data: [kind, relPath] });
+  const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
+  let result = null;
+  for (const url of ['/run/ab_fetch_preview', '/api/ab_fetch_preview']) {
+    try {
+      const resp = await fetch(url, opts);
+      if (!resp.ok) continue;
+      const json = await resp.json();
+      // Gradio v3.x returns { data: [output1, ...] }, sometimes nested.
+      if (json && Array.isArray(json.data) && json.data.length) {
+        result = json.data[0];
+      } else if (json && typeof json === 'object' && 'success' in json) {
+        result = json;
+      }
+      if (result) break;
+    } catch (e) { /* try next */ }
+  }
+  if (!result) {
+    btn.textContent = '✗ Network error — see console';
+    btn.style.background = 'rgba(200,60,60,0.4)';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; btn.style.background = ''; }, 4000);
+    return;
+  }
+  if (!result.success) {
+    btn.textContent = '✗ ' + (result.message || 'Failed');
+    btn.style.background = 'rgba(200,60,60,0.4)';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; btn.style.background = ''; }, 4000);
+    return;
+  }
+  btn.textContent = '✓ ' + (result.message || 'Fetched') + ' — reloading…';
+  btn.style.background = 'rgba(78,205,196,0.4)';
+  setTimeout(() => { window.location.reload(); }, 1200);
+}
+
+// Delegated click handler — fires for any button with data-fetch-kind, even
+// when PhotoSwipe rebuilds the caption DOM between slides.
+document.addEventListener('click', (ev) => {
+  const t = ev.target.closest('[data-fetch-kind]');
+  if (!t) return;
+  ev.preventDefault(); ev.stopPropagation();
+  fetchCivitaiPreview(t.getAttribute('data-fetch-kind'), t.getAttribute('data-fetch-rel'), t);
+});
+
 // --------- Caption renderers per tab ----------
 function captionImage(d) {
   const m = d._fooocusMeta || {};
@@ -440,12 +515,14 @@ function captionImage(d) {
 function captionLora(d) {
   const it = d._item || {};
   const triggers = (it.trigger_words || []).join(', ');
+  const fetchBtn = (it.preview_kind === 'placeholder') ? fetchCivitaiPreviewBtnHtml('loras', it.rel_path) : '';
   return `<h2>${escapeHtml(it.filename)}</h2>
     <div class="meta-row"><span class="k">Path</span><span class="v">${escapeHtml(it.rel_path)}</span></div>
     <div class="meta-row"><span class="k">Size</span><span class="v">${fmtBytes(it.size_bytes)}</span></div>
     <div class="meta-row"><span class="k">Modified</span><span class="v">${escapeHtml(it.modified_at || '')}</span></div>
     ${triggers ? `<div class="meta-row"><span class="k">Triggers</span><div class="v"><code class="triggers">${escapeHtml(triggers)}</code></div></div>` : '<div class="meta-row"><span class="k">Triggers</span><span class="v" style="opacity:.6">— none —</span></div>'}
     <div class="copy-row">
+      ${fetchBtn}
       ${triggers ? `<button data-copy="${escapeHtml(triggers)}">📋 Copy triggers</button>` : ''}
       <button data-copy="${escapeHtml(it.filename)}">📋 Copy filename</button>
       ${it.civitai_url ? `<a href="${escapeHtml(it.civitai_url)}" target="_blank">🔗 Open on CivitAI</a>` : ''}
@@ -462,12 +539,14 @@ function captionCheckpoint(d) {
        <div class="meta-row"><span class="k">Top res</span><span class="v">${escapeHtml(c.top_resolution || '?')}</span></div>`
     : '<div class="meta-row"><span class="k">Consensus</span><span class="v" style="opacity:.6">— not in cache (use CivitAI panel in Fooocus) —</span></div>';
   const consensusJson = JSON.stringify(c, null, 2);
+  const fetchBtn = (it.preview_kind === 'placeholder') ? fetchCivitaiPreviewBtnHtml('checkpoints', it.rel_path) : '';
   return `<h2>${escapeHtml(it.filename)}</h2>
     <div class="meta-row"><span class="k">Path</span><span class="v">${escapeHtml(it.rel_path)}</span></div>
     <div class="meta-row"><span class="k">Size</span><span class="v">${fmtBytes(it.size_bytes)}</span></div>
     ${it.base_model ? `<div class="meta-row"><span class="k">Base</span><span class="v">${escapeHtml(it.base_model)}</span></div>` : ''}
     ${consensusRows}
     <div class="copy-row">
+      ${fetchBtn}
       ${Object.keys(c).length ? `<button data-copy="${escapeHtml(consensusJson)}">📋 Copy consensus (JSON)</button>` : ''}
       <button data-copy="${escapeHtml(it.filename)}">📋 Copy filename</button>
       ${it.civitai_url ? `<a href="${escapeHtml(it.civitai_url)}" target="_blank">🔗 Open on CivitAI</a>` : ''}
@@ -477,6 +556,7 @@ function captionEmbedding(d) {
   const it = d._item || {};
   const triggers = (it.trigger_words || []).join(', ');
   const embToken = `(embedding:${it.trigger}:1.0)`;
+  const fetchBtn = (it.preview_kind === 'placeholder') ? fetchCivitaiPreviewBtnHtml('embeddings', it.rel_path) : '';
   return `<h2>${escapeHtml(it.filename)}</h2>
     <div class="meta-row"><span class="k">Trigger</span><div class="v"><code class="triggers">${escapeHtml(it.trigger)}</code></div></div>
     <div class="meta-row"><span class="k">Likely use</span><span class="v">${it.is_negative_hint ? '<b style="color:#ff8a8a">negative prompt</b>' : 'positive prompt'}</span></div>
@@ -484,6 +564,7 @@ function captionEmbedding(d) {
     <div class="meta-row"><span class="k">Size</span><span class="v">${fmtBytes(it.size_bytes)}</span></div>
     ${triggers ? `<div class="meta-row"><span class="k">Extra triggers</span><div class="v"><code class="triggers">${escapeHtml(triggers)}</code></div></div>` : ''}
     <div class="copy-row">
+      ${fetchBtn}
       <button data-copy="${escapeHtml(embToken)}">📋 ${escapeHtml(embToken)}</button>
       <button data-copy="${escapeHtml(it.trigger)}">📋 Trigger only</button>
       ${it.civitai_url ? `<a href="${escapeHtml(it.civitai_url)}" target="_blank">🔗 Open on CivitAI</a>` : ''}

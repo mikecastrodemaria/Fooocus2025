@@ -1190,6 +1190,32 @@ with shared.gradio_root:
                         _ab_format_status_html,
                         outputs=[ab_status],
                         every=2, queue=False, show_progress=False)
+
+                    # === Hidden API bridge for the SPA's "Fetch from CivitAI" button.
+                    # Exposed via api_name so the standalone HTML can POST to it
+                    # over Gradio's REST endpoint (/run/ab_fetch_preview in v3.x,
+                    # /api/predict via Gradio queue). Pure backend bridge, no UI.
+                    ab_fetch_kind_in     = gr.Textbox(visible=False)
+                    ab_fetch_filename_in = gr.Textbox(visible=False)
+                    ab_fetch_result_out  = gr.JSON(visible=False)
+                    ab_fetch_btn         = gr.Button(visible=False)
+
+                    def _ab_fetch_civitai_preview(kind, rel_filename):
+                        try:
+                            from modules.model_indexer import fetch_civitai_preview_for
+                            return fetch_civitai_preview_for(kind, rel_filename)
+                        except Exception as e:
+                            return {'success': False,
+                                     'message': f'Internal error: {e}',
+                                     'kind': kind, 'rel_path': rel_filename}
+
+                    ab_fetch_btn.click(
+                        _ab_fetch_civitai_preview,
+                        inputs=[ab_fetch_kind_in, ab_fetch_filename_in],
+                        outputs=[ab_fetch_result_out],
+                        api_name='ab_fetch_preview',
+                        queue=False, show_progress=False,
+                    )
                 # === end custom-8 =================================================
                 dev_mode = gr.Checkbox(label='Developer Debug Mode', value=modules.config.default_developer_debug_mode_checkbox, container=False)
 

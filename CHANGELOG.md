@@ -3,6 +3,19 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-8.4] — 2026-05-03 — Fetch CivitAI preview from the lightbox
+### Added
+- **🌐 Fetch from CivitAI** button inside the PhotoSwipe lightbox caption sidebar. Visible only on models whose preview is a placeholder (no sidecar yet). One click → downloads the top-rated CivitAI image for that model and saves it as `<stem>.preview.png` next to the model file (A1111 / ComfyUI sidecar convention — visible in those tools too). After save, the model's manifest is rebuilt so the SPA reloads with the real preview.
+- **`modules/model_indexer.py::fetch_civitai_preview_for(kind, rel_filename, api_key=None)`** — backend function. Resolves the model path, hashes it via the existing `civitai_api._get_full_sha256`, calls `civitai_api.get_model_version_by_hash` then `get_top_images`, downloads the first image via `urllib.request`, normalises to PNG via Pillow, writes the sidecar. Refuses to overwrite an existing sidecar (would silently destroy a hand-curated preview — user must delete first). Invalidates the cached thumbnail / placeholder for that model id so the next manifest rebuild picks up the new sidecar.
+- **Hidden Gradio API endpoint** in `webui.py` — `gr.Button(visible=False).click(api_name='ab_fetch_preview')` exposes `_ab_fetch_civitai_preview(kind, rel_filename)` at `/run/ab_fetch_preview` (and `/api/ab_fetch_preview` as fallback). Pure backend bridge, zero UI.
+- **SPA-side JS handler** `fetchCivitaiPreview(kind, relPath, btn)` — POSTs to the endpoint, shows live state on the button (`⏳ Fetching from CivitAI…` → `✓ Preview fetched — reloading…` → `location.reload()`, or `✗ Not found on CivitAI` / `✗ Network error` on failure). Delegated click handler so PhotoSwipe rebuilding the caption DOM between slides keeps it working.
+- **Standalone-mode awareness**: the Fetch button is hidden when the SPA is opened via `file://` (no Fooocus to call). `HAS_FOOOCUS` constant set from `window.location.protocol`.
+### Larger placeholders (companion fix)
+- Placeholder PNGs are now generated at fixed **1024×1024** (`PLACEHOLDER_FULL_SIZE`) instead of the same 256×256 used for the grid thumbnail. This fixes the visual misalignment in the lightbox — image and caption now have comparable footprints. The 256×256 grid thumb is still derived from this PNG via `_make_preview_thumb`. Gradient is generated via numpy broadcasting (~245 ms per placeholder vs ~5-10 s with putpixel).
+### Notes
+- Refusing overwrite is intentional (data-loss avoidance). v2 idea: a "Force overwrite" toggle near the button or a "Delete current preview" button.
+- Disk overhead per fetched preview: same as a typical CivitAI image, ~200-500 KB per model. For 100 missing models = ~20-50 MB max.
+
 ## [custom-8.3] — 2026-05-03 — Async reindex worker (no more browser timeouts)
 ### Changed
 - **Reindex now runs in a daemon thread** — the click handler returns immediately so the browser never blocks waiting for the multi-minute job (previously caused `ConnectionResetError WinError 10054` when the HTTP request timed out around 5+ minutes for ~25k images).
