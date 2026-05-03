@@ -45,6 +45,12 @@ INDEX_DIR_NAME = '_index'
 PREVIEWS_DIR_NAME = '_previews'
 PLACEHOLDER_DIR_NAME = 'placeholders'
 
+# Placeholder PNGs are generated at this fixed size (independent of
+# thumbnail_size) so the PhotoSwipe lightbox shows them at a usable size
+# instead of stretched-up 256x256 squares. The 256x256 thumbnail used in
+# the grid is derived from this image via _make_preview_thumb.
+PLACEHOLDER_FULL_SIZE = 1024
+
 
 def _thumb_size() -> int:
     return int(modules.config.asset_browser_setting('thumbnail_size', 256))
@@ -123,50 +129,49 @@ def _hash_id(s: str, length: int = 12) -> str:
 
 def _make_placeholder_png(filename_for_label: str, dest_path: str) -> bool:
     """Generate a hash-derived gradient placeholder PNG with the filename overlay.
-    Idempotent: returns True if dest already exists (or just got written).
+    Always rendered at PLACEHOLDER_FULL_SIZE (1024) regardless of thumbnail_size,
+    so the lightbox shows a usable full-screen image. The 256x256 grid thumb is
+    derived from this PNG via _make_preview_thumb. Idempotent.
     """
     try:
         if os.path.isfile(dest_path):
             return True
         from PIL import Image, ImageDraw, ImageFont
+        import numpy as np
 
         h = hashlib.sha1(filename_for_label.encode('utf-8', errors='replace')).hexdigest()
-        # Two colors derived from the hash.
-        c1 = (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-        c2 = (int(h[6:8], 16), int(h[8:10], 16), int(h[10:12], 16))
+        c1 = np.array([int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)], dtype=np.float32)
+        c2 = np.array([int(h[6:8], 16), int(h[8:10], 16), int(h[10:12], 16)], dtype=np.float32)
 
-        size = _thumb_size()
-        im = Image.new('RGB', (size, size), c1)
-        # Vertical linear gradient from c1 to c2.
-        for y in range(size):
-            t = y / max(1, size - 1)
-            r = int(c1[0] * (1 - t) + c2[0] * t)
-            g = int(c1[1] * (1 - t) + c2[1] * t)
-            b = int(c1[2] * (1 - t) + c2[2] * t)
-            for x in range(size):
-                im.putpixel((x, y), (r, g, b))
+        size = PLACEHOLDER_FULL_SIZE
+        # Vectorised vertical gradient — putpixel on 1024x1024 = ~1M iterations
+        # in Python = several seconds per placeholder. numpy does it in <5 ms.
+        t = np.linspace(0, 1, size, dtype=np.float32).reshape(size, 1, 1)   # (H, 1, 1)
+        gradient = (c1 * (1 - t) + c2 * t).astype(np.uint8)                  # (H, 1, 3)
+        arr = np.broadcast_to(gradient, (size, size, 3)).copy()              # (H, W, 3)
+        im = Image.fromarray(arr, mode='RGB')
 
         draw = ImageDraw.Draw(im)
-        # Filename overlay (basename, no extension) — broken into chunks if too long.
         label = os.path.splitext(os.path.basename(filename_for_label))[0]
         max_len = _placeholder_label_max()
         if len(label) > max_len:
             head = max(4, (max_len - 1) // 2)
             tail = max(4, max_len - head - 1)
             label = label[:head] + '…' + label[-tail:]
+        font_px = max(16, size // 18)   # 56 px on a 1024 placeholder, scales linearly
         try:
-            font = ImageFont.truetype('arial.ttf', 14)
+            font = ImageFont.truetype('arial.ttf', font_px)
         except Exception:
             font = ImageFont.load_default()
-        # Center the text.
         try:
             bbox = draw.textbbox((0, 0), label, font=font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         except Exception:
-            tw, th = (size // 2, 14)
-        tx = max(4, (size - tw) // 2)
-        ty = size - th - 10
-        draw.rectangle((0, ty - 4, size, ty + th + 4), fill=(0, 0, 0, 160))
+            tw, th = (size // 2, font_px)
+        tx = max(8, (size - tw) // 2)
+        pad_y = max(8, size // 64)
+        ty = size - th - pad_y * 2
+        draw.rectangle((0, ty - pad_y, size, ty + th + pad_y * 2), fill=(0, 0, 0, 160))
         draw.text((tx, ty), label, fill=(255, 255, 255), font=font)
 
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
