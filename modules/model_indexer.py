@@ -192,12 +192,34 @@ def _make_preview_thumb(source_path: str, dest_path: str) -> bool:
         return False
 
 
-def _resolve_preview(model_rel_filename: str, model_full_path: str, kind: str) -> tuple:
-    """Resolve sidecar preview OR placeholder, cache the 256x256 thumb in
-    outputs/_previews/<kind>/, return (preview_rel_path, preview_kind).
+def _copy_full_preview(source_path: str, dest_path: str) -> bool:
+    """Copy the original sidecar preview to outputs/_previews/<kind>/<hash>_full.<ext>
+    so the SPA lightbox can show it at native resolution (instead of the 256x256
+    thumbnail). Cached by source mtime — only re-copies if source is newer.
+    """
+    try:
+        if (os.path.isfile(dest_path)
+                and os.path.getmtime(dest_path) >= os.path.getmtime(source_path)):
+            return True
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        import shutil
+        shutil.copy2(source_path, dest_path)
+        return True
+    except Exception as e:
+        print(f'[asset-browser] full-preview copy failed for {source_path}: {e}')
+        return False
 
-    preview_rel_path is relative to outputs/, so the SPA can use it directly.
+
+def _resolve_preview(model_rel_filename: str, model_full_path: str, kind: str) -> tuple:
+    """Resolve sidecar preview OR placeholder, cache the thumbnail (always) AND
+    the full-resolution copy (when sidecar exists), return
+    (thumb_rel_path, full_rel_path, preview_kind).
+
+    All paths are relative to outputs/, so the SPA can use them directly.
     preview_kind is 'sidecar' | 'placeholder'.
+
+    For sidecars: full = copy of the original sidecar at native resolution.
+    For placeholders: full = the 256x256 placeholder PNG itself.
     """
     cache_id = _hash_id(model_rel_filename)
     thumb_dir = _previews_dir(kind)
@@ -206,16 +228,24 @@ def _resolve_preview(model_rel_filename: str, model_full_path: str, kind: str) -
 
     sidecar = _find_sidecar_preview(model_full_path)
     if sidecar and _make_preview_thumb(sidecar, thumb_path):
-        return rel_thumb, 'sidecar'
+        # Cache the full sidecar with its original extension (PNG/JPG/etc).
+        ext = os.path.splitext(sidecar)[1].lower() or '.png'
+        full_path = os.path.join(thumb_dir, f'{cache_id}_full{ext}')
+        if _copy_full_preview(sidecar, full_path):
+            rel_full = os.path.relpath(full_path, _outputs_root()).replace(os.sep, '/')
+        else:
+            rel_full = rel_thumb   # fallback to thumb if copy failed
+        return rel_thumb, rel_full, 'sidecar'
 
-    # Placeholder route.
+    # Placeholder route — same image for thumb + full (placeholder is already 256x256).
     placeholder_dir = os.path.join(_outputs_root(), PREVIEWS_DIR_NAME, PLACEHOLDER_DIR_NAME)
     placeholder_png = os.path.join(placeholder_dir, f'{cache_id}.png')
     if _make_placeholder_png(model_rel_filename, placeholder_png):
         if _make_preview_thumb(placeholder_png, thumb_path):
-            return rel_thumb, 'placeholder'
+            rel_full = os.path.relpath(placeholder_png, _outputs_root()).replace(os.sep, '/')
+            return rel_thumb, rel_full, 'placeholder'
     # Last resort: empty preview.
-    return '', 'missing'
+    return '', '', 'missing'
 
 
 # --------------------------------------------------------------------------
@@ -307,13 +337,14 @@ def _checkpoint_consensus_from_cache(filename: str) -> dict:
 
 
 def _build_lora_item(rel_filename: str, full_path: str) -> dict:
-    preview, preview_kind = _resolve_preview(rel_filename, full_path, 'loras')
+    preview, preview_full, preview_kind = _resolve_preview(rel_filename, full_path, 'loras')
     item = {
         'id': _hash_id(rel_filename, 16),
         'filename': os.path.basename(rel_filename),
         'rel_path': rel_filename.replace(os.sep, '/'),
         'subfolder': os.path.dirname(rel_filename).replace(os.sep, '/') or '.',
         'preview': preview,
+        'preview_full': preview_full,
         'preview_kind': preview_kind,
         'trigger_words': _read_cached_triggers(rel_filename, 'lora'),
         'civitai_url': _civitai_url_from_cache(rel_filename, 'lora'),
@@ -323,7 +354,7 @@ def _build_lora_item(rel_filename: str, full_path: str) -> dict:
 
 
 def _build_checkpoint_item(rel_filename: str, full_path: str) -> dict:
-    preview, preview_kind = _resolve_preview(rel_filename, full_path, 'checkpoints')
+    preview, preview_full, preview_kind = _resolve_preview(rel_filename, full_path, 'checkpoints')
     consensus = _checkpoint_consensus_from_cache(rel_filename)
     item = {
         'id': _hash_id(rel_filename, 16),
@@ -331,6 +362,7 @@ def _build_checkpoint_item(rel_filename: str, full_path: str) -> dict:
         'rel_path': rel_filename.replace(os.sep, '/'),
         'subfolder': os.path.dirname(rel_filename).replace(os.sep, '/') or '.',
         'preview': preview,
+        'preview_full': preview_full,
         'preview_kind': preview_kind,
         'base_model': consensus.pop('base_model', None),
         'civitai_consensus': consensus or None,
@@ -341,7 +373,7 @@ def _build_checkpoint_item(rel_filename: str, full_path: str) -> dict:
 
 
 def _build_embedding_item(rel_filename: str, full_path: str) -> dict:
-    preview, preview_kind = _resolve_preview(rel_filename, full_path, 'embeddings')
+    preview, preview_full, preview_kind = _resolve_preview(rel_filename, full_path, 'embeddings')
     base = os.path.splitext(os.path.basename(rel_filename))[0].lower()
     is_negative_hint = any(base.startswith(p) for p in NEGATIVE_PREFIXES)
     item = {
@@ -350,6 +382,7 @@ def _build_embedding_item(rel_filename: str, full_path: str) -> dict:
         'rel_path': rel_filename.replace(os.sep, '/'),
         'subfolder': os.path.dirname(rel_filename).replace(os.sep, '/') or '.',
         'preview': preview,
+        'preview_full': preview_full,
         'preview_kind': preview_kind,
         'trigger': os.path.splitext(os.path.basename(rel_filename))[0],
         'is_negative_hint': is_negative_hint,

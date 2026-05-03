@@ -3,6 +3,13 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-8.2] — 2026-05-03 — Lightbox readability: full-res model previews + wider caption
+### Changed
+- **Lightbox now shows the full-resolution sidecar preview** (was the 256×256 thumbnail). On open, model_indexer now also caches a copy of the original sidecar to `outputs/_previews/<kind>/<hash>_full.<ext>` (PNG/JPG kept as-is). Manifest entries gain a `preview_full` field; the SPA prefers it over `preview` for the lightbox slide src and probes its real dimensions for correct PhotoSwipe centring/zoom. For models with no sidecar, `preview_full` falls back to the 256×256 placeholder PNG.
+- **Wider Dynamic Caption sidebar**: width 320px → 440px, max-width 360px → 520px, font 13px → 14px, h2 16px (was 14px), padding 14/16 → 18/20, line-height 1.45 → 1.5. Long filenames like `Anime Summer Days Style SDXL_LoRA_Pony Diffusion V6 XL.safetensors` now wrap on word boundaries instead of mid-character, the metadata label column is wider (90→100px) for better alignment.
+- **Generous lightbox padding**: switched from `padding: { left: 320, ... }` (which was reserving room on the wrong side) to a uniform `padding: 30px` all around. Dynamic Caption auto-positions next to the image and switches to 'below' mode when there isn't enough horizontal room — the previous left-bias was forcing the image off-centre.
+- **Disk overhead notice**: the full-sidecar copy roughly doubles disk usage of `_previews/`. For typical setups (sidecar PNGs 0.5-2 MB each, ~100 LoRAs) that's ~50-200 MB max — acceptable. Cached by source mtime so re-indexing is idempotent.
+
 ## [custom-8.1] — 2026-05-03 — Blur NSFW + Hide days/subfolders
 ### Added
 - **NSFW thumbnail blur** — new `asset_browser.blur_thumbnails` config (default `false`) + UI checkbox in the Advanced > 🖼️ Asset Browser accordion. When ON, the SPA blurs every thumbnail (`filter: blur(20px) saturate(0.7)`); hover or click reveals individually. The Browser header has a 🌫️ Blur toggle that lets each user override the config default temporarily (sticky in browser localStorage). Useful on shared screens / NSFW-adjacent collections.

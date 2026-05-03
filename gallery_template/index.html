@@ -144,17 +144,18 @@
 
   /* PhotoSwipe Dynamic Caption — our metadata sidebar styles. */
   .pswp__dynamic-caption {
-    color: var(--text); background: rgba(28,28,28,0.92); border-radius: 6px;
-    font-size: 13px; line-height: 1.45; padding: 14px 16px; max-width: 360px;
+    color: var(--text); background: rgba(28,28,28,0.92); border-radius: 8px;
+    font-size: 14px; line-height: 1.5; padding: 18px 20px; max-width: 520px;
     border: 1px solid var(--border);
   }
-  .pswp__dynamic-caption.pswp__dynamic-caption--aside { width: 320px; }
+  .pswp__dynamic-caption.pswp__dynamic-caption--aside { width: 440px; }
   .pswp__dynamic-caption h2 {
-    margin: 0 0 6px; font-size: 14px; color: var(--accent); word-break: break-all;
+    margin: 0 0 10px; font-size: 16px; color: var(--accent); word-break: break-word;
+    line-height: 1.3;
   }
   .pswp__dynamic-caption .meta-row {
-    display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px;
-    margin: 4px 0; font-size: 12px;
+    display: grid; grid-template-columns: 100px 1fr; gap: 6px 12px;
+    margin: 6px 0; font-size: 13px;
   }
   .pswp__dynamic-caption .meta-row .k { color: var(--muted); }
   .pswp__dynamic-caption .meta-row .v {
@@ -386,7 +387,10 @@ function getLightbox(kind, captionRenderer) {
     pswpModule: PhotoSwipe,
     bgOpacity: 0.92,
     showHideAnimationType: 'fade',
-    padding: { top: 20, bottom: 20, left: 320, right: 20 },
+    // Generous padding all around — Dynamic Caption ('aside' mode) auto-positions
+    // itself next to the image without overlap and switches to 'below' when there's
+    // not enough horizontal room. We just need to leave breathing room.
+    padding: { top: 30, bottom: 30, left: 30, right: 30 },
   });
   new PhotoSwipeDynamicCaption(lb, {
     type: 'aside',
@@ -637,13 +641,22 @@ function buildModelsTab(kind, opts) {
         : this.items.filter(it => (it.subfolder || '.') === this.activeSubfolder));
       if (filtered.length === 0) { renderEmpty($main, 'Nothing to show here.'); return; }
 
-      // Slides for lightbox: we use the 256x256 preview as src (M3 limitation
-      // — no full-res sidecar pass-through yet). DeepZoom plugin still allows
-      // pinch-zoom on it via its CSS-fallback mode.
-      this._slides = filtered.map(it => ({
-        src: it.preview ? `./${it.preview}` : '',
-        width: 256, height: 256,
-        _item: it,
+      // Slides for lightbox: prefer the full-resolution preview_full (sidecar
+      // copy at native size) and fall back to the 256x256 thumb if missing.
+      // Probe dimensions async so PhotoSwipe centres / zooms correctly.
+      this._slides = await Promise.all(filtered.map(async (it) => {
+        const fullSrc = it.preview_full || it.preview;
+        const url = fullSrc ? `./${fullSrc}` : '';
+        let w = 512, h = 512;
+        if (url) {
+          try { const d = await probeDimensions(url); w = d.w; h = d.h; } catch (_) {}
+        }
+        return {
+          src: url,
+          msrc: it.preview ? `./${it.preview}` : undefined,
+          width: w, height: h,
+          _item: it,
+        };
       }));
       const lb = getLightbox(this.kind, opts.captionRenderer);
       lb.options.dataSource = this._slides;
