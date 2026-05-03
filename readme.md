@@ -116,6 +116,13 @@ Filenames are sanitised (letters/digits/underscore/dash only). Create rejects co
 
 **Why it's useful:** every SDXL checkpoint has its own "sweet spot" parameters, and the uploader's page rarely lists them clearly. This reads them directly from what actually worked for the highest-rated outputs on CivitAI — and composes with your LoRA/embedding setup to produce a ready-to-reuse preset in one click.
 
+**Cache location (configurable):** CivitAI responses are cached at `./civitai_cache/` by default. You can move the cache anywhere by setting **`path_civitai_cache`** in `config.txt` — useful when you have hundreds of models and want the cache on a faster/larger drive:
+```json
+{
+  "path_civitai_cache": "D:/Caches/civitai"
+}
+```
+
 ---
 
 ### 6. 📐 Use Aspect Ratio for Vary
@@ -187,12 +194,35 @@ Unchecked → original upstream behaviour (preserves input's native aspect). Doe
 3. Click **🔄 Reindex everything now** to backfill thumbnails + manifests for your existing outputs and your installed models. Console shows progress.
 4. Click the new **🖼️ Asset Browser** link in the prompt area → opens in a new tab.
 
-**Sub-toggles** (all default ON when master is enabled):
-- *Generate thumbnails on save* — 256×256 JPEG centre-crop, ~10 ms/image, makes the grid load instantly even with thousands of images.
-- *Generate deep-zoom tiles for big images* — `auto` (>4 MP), `always`, `never`. Currently a no-op in v1 (the Deep Zoom plugin falls back to PhotoSwipe's native pinch/scroll zoom on the full image — fine for everything except gigapixel scans).
+**UI sub-toggles** (all default ON when master is enabled, exposed in the Advanced accordion):
+- *Generate thumbnails on save* — JPEG centre-crop, ~10 ms/image, makes the grid load instantly even with thousands of images.
+- *Generate deep-zoom tiles for big images* — `auto` (>4 MP by default), `always`, `never`. Currently a no-op in v1 (the Deep Zoom plugin falls back to PhotoSwipe's native pinch/scroll zoom on the full image — fine for everything except gigapixel scans).
 - *Index models on startup* — daemon thread, ~2-5 s for hundreds of LoRAs (uses cache, never makes fresh CivitAI API calls in bulk).
 
+**Advanced tunables (`config.txt` only — not exposed in the UI to avoid clutter):**
+
+```json
+{
+  "asset_browser": {
+    "thumbnail_size": 256,         // 64..1024 px square. Try 128 to ~quarter disk usage + speed up grid load.
+    "thumbnail_quality": 85,       // 40..100 JPEG quality. 70 ~halves file size at minor visual cost.
+    "dzi_threshold_mp": 4.0,       // 0.5..64.0 MP — when generate_dzi_tiles='auto' kicks in (DZI gen still deferred in v1).
+    "placeholder_label_max": 24    // 8..64 chars before truncating the filename overlay on placeholder previews.
+  }
+}
+```
+
+Each value is clamped on save — bad values in `config.txt` fall back to the default rather than crashing.
+
 **Browser navigation** — URL hash for tab state: `outputs/index.html#loras` / `#checkpoints` / `#embeddings` are all bookmarkable.
+
+**Generated artifacts** — everything the Asset Browser writes lives under your `path_outputs` (configurable in `config.txt`):
+- `outputs/index.html` + `outputs/_assets/` — the SPA + bundled PhotoSwipe.
+- `outputs/_index/{days,loras,checkpoints,embeddings}.json` — the manifests the SPA reads.
+- `outputs/_previews/<kind>/<hash>.jpg` — model preview thumbnails (sidecars + placeholders).
+- `outputs/<DATE>/<image>_thumb.jpg` — output thumbnails next to each image.
+
+All are gitignored under `outputs/` and can be wiped at any time — the next Reindex rebuilds them.
 
 **Future v2 (not in this release):** open the SPA as an **iframe modal inside Fooocus** when the user clicks a LoRA/Checkpoint dropdown — picks a model visually instead of by filename. Already feasible without changes to the SPA itself (just a JS bridge in Fooocus).
 
@@ -239,6 +269,39 @@ git fetch fork2025 && git checkout -b fork2025-main fork2025/main
 
 ### Hardware note (RTX 5090 users)
 The install root of the original package can include launcher scripts tuned for an **NVIDIA RTX 5090** (`boot_check_rtx5090.bat`, `run_quality_rtx5090.bat`). These are *not* part of this git repo — use the stock `run.bat` / `run_realistic.bat` / `run_anime.bat` for any other hardware.
+
+---
+
+## ⚙️ Fork-specific `config.txt` keys
+
+All upstream keys still apply. The fork adds a few of its own. Most have a UI control (Advanced tab) but the ones below are useful enough to be tunable directly in `config.txt`:
+
+| Key | Default | Range / Type | Used by | Purpose |
+|---|---|---|---|---|
+| `civitai_api_key` | `""` | string | custom-2 | API key persisted from the CivitAI panel. |
+| `path_civitai_cache` | `"./civitai_cache"` | path string | custom-2 (custom-8 made it configurable) | CivitAI response cache directory. Move to a different drive if you have hundreds of cached models. |
+| `asset_browser.enabled` | `false` | bool | custom-8 | Master toggle. **OFF by default** — when off the per-image hook returns in <1 µs, the indexer thread is never spawned. |
+| `asset_browser.generate_thumbnails` | `true` | bool | custom-8 | Generate `*_thumb.jpg` next to each output (~10 ms/image). |
+| `asset_browser.generate_dzi_tiles` | `"auto"` | `"auto"` / `"always"` / `"never"` | custom-8 | DZI tile generation mode (`auto` = above `dzi_threshold_mp`). DZI generation itself is still deferred in v1. |
+| `asset_browser.index_models_on_boot` | `true` | bool | custom-8 | Daemon thread on startup, scans LoRAs / Checkpoints / Embeddings (~2-5 s, cached). |
+| `asset_browser.thumbnail_size` | `256` | 64..1024 | custom-8 | Square thumbnail size in pixels. 128 cuts disk usage / load time ~75 %. |
+| `asset_browser.thumbnail_quality` | `85` | 40..100 | custom-8 | JPEG quality for thumbnails. 70 ~halves file size. |
+| `asset_browser.dzi_threshold_mp` | `4.0` | 0.5..64.0 | custom-8 | Megapixel threshold for `generate_dzi_tiles="auto"`. |
+| `asset_browser.placeholder_label_max` | `24` | 8..64 | custom-8 | Filename length on placeholder previews before truncation. |
+
+Each value is clamped on save — bad values in `config.txt` fall back to the default rather than crashing.
+
+Example fragment:
+```json
+{
+  "path_civitai_cache": "D:/Caches/civitai",
+  "asset_browser": {
+    "enabled": true,
+    "thumbnail_size": 128,
+    "thumbnail_quality": 70
+  }
+}
+```
 
 ---
 
