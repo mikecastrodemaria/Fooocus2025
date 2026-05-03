@@ -308,25 +308,85 @@ def on_image_logged(image_path, metadata=None, task=None) -> None:
         print(f'[asset-browser] on_image_logged failed for {image_path}: {e}')
 
 
-def reindex_outputs() -> tuple:
-    """Walks all date subdirs under outputs/, regenerates thumbnails + manifests
-    for every image found. Used to backfill history when the user enables the
-    feature for the first time. Returns (ok, message).
+# --------------------------------------------------------------------------
+# Async reindex — non-blocking worker + pollable status
+# --------------------------------------------------------------------------
+# A 25k-image reindex can take 5-15 minutes. Running it inside the Gradio
+# click handler blocks the HTTP request and the browser eventually times
+# out (Win10054 ConnectionResetError). The worker pattern below runs the
+# job in a daemon thread; the UI polls `reindex_status()` every couple of
+# seconds and renders progress.
+
+_reindex_state = {
+    'running': False,
+    'phase': 'idle',                    # 'idle' | 'starting' | 'outputs' | 'models' | 'done' | 'error'
+    'started_at': None,
+    'finished_at': None,
+    'days_total': 0,
+    'days_done': 0,                     # only counts days with images
+    'days_seen': 0,                     # walked (incl. empty)
+    'current_date': None,
+    'images_total': 0,
+    'message': '',
+    'last_summary': '',                 # final user-readable line, sticks after 'done'
+}
+_reindex_state_lock = threading.Lock()  # short-lived, only for atomic state mutations
+
+
+def reindex_status() -> dict:
+    """Snapshot of the reindex worker's current state. Cheap, polled by the UI."""
+    with _reindex_state_lock:
+        return dict(_reindex_state)
+
+
+def reindex_outputs_async() -> tuple:
+    """Spawn the reindex in a daemon thread. Returns immediately with
+    (started: bool, message: str). Status pollable via reindex_status().
+    Refuses to start if a reindex is already running.
     """
     if not _enabled():
         return False, 'Asset Browser is disabled. Enable it in Advanced first.'
+    with _reindex_state_lock:
+        if _reindex_state['running']:
+            return False, 'A reindex is already running. Watch its progress below.'
+        _reindex_state.update({
+            'running': True, 'phase': 'starting',
+            'started_at': datetime.datetime.now().isoformat(timespec='seconds'),
+            'finished_at': None,
+            'days_total': 0, 'days_done': 0, 'days_seen': 0,
+            'current_date': None, 'images_total': 0,
+            'message': 'Starting…',
+        })
+    threading.Thread(
+        target=_reindex_worker, name='asset-browser-reindex', daemon=True,
+    ).start()
+    return True, 'Reindex started in background — progress below.'
+
+
+def _reindex_worker() -> None:
+    """The actual reindex body, running off the main Gradio thread."""
+    def _set(**kw):
+        with _reindex_state_lock:
+            _reindex_state.update(kw)
+
     try:
         out_root = _outputs_root()
         if not os.path.isdir(out_root):
-            return False, f'Outputs directory does not exist: {out_root}'
+            _set(phase='error', message=f'Outputs directory does not exist: {out_root}',
+                 last_summary=f'Outputs directory does not exist: {out_root}')
+            return
         ensure_gallery_assets()
 
         total_images = 0
         total_days = 0
+        all_dates = _scan_existing_dates(out_root)
+        _set(phase='outputs', days_total=len(all_dates),
+             message=f'Scanning {len(all_dates)} date dir(s)…')
+        print(f'[asset-browser] reindex starting: {len(all_dates)} date dir(s) under {out_root}')
+
         with _lock:
-            all_dates = _scan_existing_dates(out_root)
-            print(f'[asset-browser] reindex starting: {len(all_dates)} date dir(s) under {out_root}')
             for di, date_string in enumerate(all_dates, start=1):
+                _set(current_date=date_string, days_seen=di)
                 date_dir = os.path.join(out_root, date_string)
                 images = []
                 for name in sorted(os.listdir(date_dir)):
@@ -353,11 +413,13 @@ def reindex_outputs() -> tuple:
                 _save_manifest(date_dir, manifest)
                 total_images += len(images)
                 total_days += 1
+                _set(days_done=total_days, images_total=total_images)
                 print(f'[asset-browser]   [{di}/{len(all_dates)}] {date_string}: {len(images)} image(s) -> manifest + thumbs OK')
             _refresh_days_index()
             print(f'[asset-browser] reindex outputs done: {total_days}/{len(all_dates)} day(s) had images, {total_images} total')
 
-        # Bundle the model indexer so a single Reindex click rebuilds everything.
+        # Models phase
+        _set(phase='models', current_date=None, message='Scanning models (LoRAs / Checkpoints / Embeddings)…')
         model_summary = ''
         try:
             from modules.model_indexer import scan_all_and_write
@@ -369,7 +431,30 @@ def reindex_outputs() -> tuple:
         except Exception as me:
             model_summary = f' (model scan failed: {me})'
 
-        return True, (f'Reindex complete: {total_days} day(s), '
-                       f'{total_images} image(s).{model_summary}')
+        final = (f'Reindex complete: {total_days} day(s), '
+                 f'{total_images} image(s).{model_summary}')
+        _set(phase='done', message=final, last_summary=final,
+             finished_at=datetime.datetime.now().isoformat(timespec='seconds'))
     except Exception as e:
-        return False, f'Reindex failed: {e}'
+        msg = f'Reindex failed: {e}'
+        print(f'[asset-browser] {msg}')
+        _set(phase='error', message=msg, last_summary=msg,
+             finished_at=datetime.datetime.now().isoformat(timespec='seconds'))
+    finally:
+        _set(running=False)
+
+
+# Legacy synchronous entrypoint kept for any external callers — now just
+# delegates to the async version + waits. Not used by the UI button anymore.
+def reindex_outputs() -> tuple:
+    """Synchronous wrapper. Use reindex_outputs_async() for the UI."""
+    started, msg = reindex_outputs_async()
+    if not started:
+        return False, msg
+    # Wait for completion (busy-wait with light sleep — only used by tests / scripts).
+    import time as _t
+    while True:
+        s = reindex_status()
+        if not s['running']:
+            return s['phase'] != 'error', s.get('last_summary') or s.get('message') or 'done'
+        _t.sleep(0.5)

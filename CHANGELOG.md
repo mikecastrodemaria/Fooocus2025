@@ -3,6 +3,21 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-8.3] — 2026-05-03 — Async reindex worker (no more browser timeouts)
+### Changed
+- **Reindex now runs in a daemon thread** — the click handler returns immediately so the browser never blocks waiting for the multi-minute job (previously caused `ConnectionResetError WinError 10054` when the HTTP request timed out around 5+ minutes for ~25k images).
+- **Live status polling**: the Asset Browser accordion's status line is now refreshed every 2 s by `shared.gradio_root.load(every=2)`. While a reindex is running it shows `🔄 Outputs: [42/135] · current: 2024-06-08 · 8124 image(s) processed so far`, then `🔄 Outputs done: 135 days · scanning models…`, then `✓ Reindex complete: 135 day(s), 24831 image(s). · models: 5234 LoRAs, 153 ckpts, 603 embeds`.
+- **Re-click protection**: clicking Reindex while one is already running shows `A reindex is already running. Watch its progress below.` instead of stacking workers.
+### Added
+- New API in `modules/gallery_writer.py`:
+  - `reindex_outputs_async()` — spawns the worker, returns `(started, message)` immediately.
+  - `reindex_status()` — pollable snapshot dict (`{ phase, days_total, days_done, days_seen, current_date, images_total, last_summary, ... }`).
+  - `_reindex_worker()` — the body of the previous synchronous `reindex_outputs()`, refactored to update the state dict as it iterates.
+  - The synchronous `reindex_outputs()` is kept as a thin wrapper for any external callers / tests (busy-waits with light sleep until the worker finishes).
+### Notes
+- The boot-time `model_indexer.maybe_start_boot_scan()` and the user-triggered async reindex use **separate locks** — that's why the previous console showed `[asset-browser] scan complete: {...}` interleaved between date dirs. Cosmetic only; both finish correctly.
+- Polling cost: a single dict copy under a lightweight lock every 2 s. Negligible.
+
 ## [custom-8.2] — 2026-05-03 — Lightbox readability: full-res model previews + wider caption
 ### Changed
 - **Lightbox now shows the full-resolution sidecar preview** (was the 256×256 thumbnail). On open, model_indexer now also caches a copy of the original sidecar to `outputs/_previews/<kind>/<hash>_full.<ext>` (PNG/JPG kept as-is). Manifest entries gain a `preview_full` field; the SPA prefers it over `preview` for the lightbox slide src and probes its real dimensions for correct PhotoSwipe centring/zoom. For models with no sidecar, `preview_full` falls back to the 256×256 placeholder PNG.

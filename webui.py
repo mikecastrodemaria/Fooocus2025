@@ -1132,24 +1132,64 @@ with shared.gradio_root:
                         queue=False, show_progress=False)
 
                     def _ab_reindex_now():
-                        # reindex_outputs() walks every date subdir under path_outputs,
-                        # builds thumbnails + manifests + days.json, AND chains to
-                        # model_indexer.scan_all_and_write() at the end so a single
-                        # click rebuilds *everything*. Calling scan_all_and_write()
-                        # directly would skip the outputs side entirely (bug fixed).
+                        # Async: spawn the worker and return immediately. The UI
+                        # polls reindex_status() every 2 s (set up below) so the
+                        # browser HTTP request never blocks for the multi-minute
+                        # job (used to time out on Win10054).
                         try:
-                            from modules.gallery_writer import reindex_outputs
-                            ok, msg = reindex_outputs()
+                            from modules.gallery_writer import reindex_outputs_async
+                            started, msg = reindex_outputs_async()
                         except Exception as e:
-                            return gr.update(value=f'<span style="color:#ff6b6b;">Reindex failed: {e}</span>')
-                        color = '#4ecdc4' if ok else '#ff6b6b'
+                            return gr.update(value=f'<span style="color:#ff6b6b;">Reindex failed to start: {e}</span>')
+                        color = '#4ecdc4' if started else '#ffa500'
                         return gr.update(value=f'<span style="color:{color};">{msg}</span>')
+
+                    def _ab_format_status_html():
+                        # Polled every 2 s — render the worker's snapshot or empty
+                        # if no reindex has ever run in this session.
+                        try:
+                            from modules.gallery_writer import reindex_status
+                            s = reindex_status()
+                        except Exception:
+                            return gr.update()
+                        phase = s.get('phase', 'idle')
+                        if phase == 'idle':
+                            return gr.update()      # don't overwrite idle status
+                        if phase == 'starting':
+                            return gr.update(value='<span style="color:#888;">Reindex starting…</span>')
+                        if phase == 'outputs':
+                            return gr.update(value=(
+                                f'<span style="color:#bb86fc;">'
+                                f'\U0001F504 Outputs: '
+                                f'[{s.get("days_seen", 0)}/{s.get("days_total", 0)}] '
+                                f'· current: <b>{s.get("current_date", "?") or "?"}</b> '
+                                f'· {s.get("images_total", 0)} image(s) processed so far'
+                                f'</span>'))
+                        if phase == 'models':
+                            return gr.update(value=(
+                                f'<span style="color:#bb86fc;">'
+                                f'\U0001F504 Outputs done: {s.get("days_done", 0)}/{s.get("days_total", 0)} day(s), '
+                                f'{s.get("images_total", 0)} image(s). '
+                                f'Now scanning models…</span>'))
+                        if phase == 'done':
+                            return gr.update(value=(
+                                f'<span style="color:#4ecdc4;">✓ {s.get("last_summary", s.get("message", "Done."))}</span>'))
+                        if phase == 'error':
+                            return gr.update(value=(
+                                f'<span style="color:#ff6b6b;">{s.get("last_summary", s.get("message", "Failed."))}</span>'))
+                        return gr.update()
 
                     ab_reindex_btn.click(
                         _ab_reindex_now,
                         inputs=[],
                         outputs=[ab_status],
-                        queue=False, show_progress='full')
+                        queue=False, show_progress=False)
+                    # Poll the worker status every 2 s. When idle the callback
+                    # returns gr.update() (no-op) so the UI is left alone.
+                    shared.gradio_root.load(
+                        _ab_format_status_html,
+                        outputs=[ab_status],
+                        every=2, queue=False, show_progress=False)
                 # === end custom-8 =================================================
                 dev_mode = gr.Checkbox(label='Developer Debug Mode', value=modules.config.default_developer_debug_mode_checkbox, container=False)
 
