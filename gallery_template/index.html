@@ -500,26 +500,29 @@ function captionImage(d) {
   const promptText = get('prompt') || get('positive') || '';
   const negativeText = get('negative_prompt') || get('negative') || '';
 
-  // `parameters` is the raw A1111-scheme string written by Fooocus's PNG
-  // metadata when no Fooocus-JSON scheme was used. The reindex backfill
-  // surfaces it as the single 'parameters' key. Show it as a Parameters row
-  // when present and there's no structured data; offer A1111 copy too.
-  const rawA1111 = get('parameters');
+  // The A1111 scheme is now parsed server-side (gallery_writer._parse_a1111_string)
+  // into the same flat dict shape as the Fooocus-JSON scheme. The original
+  // raw A1111 text is preserved under '_raw_a1111' so the Copy button can
+  // offer it verbatim (handy for re-importing into A1111-style tools).
+  const rawA1111 = get('_raw_a1111');
   const hasStructured = rows.length > 0 || promptText || negativeText;
 
-  const copyText = (rawA1111 && !hasStructured) ? rawA1111 : JSON.stringify(m, null, 2);
-  const copyLabel = (rawA1111 && !hasStructured) ? '📋 All params (A1111)' : '📋 All params (JSON)';
+  // Copy button: offer JSON of all keys (skip the bulky `_raw_a1111` from the
+  // dump to keep it readable). If the user wants the raw A1111 string they
+  // get a dedicated button when it's available.
+  const cleanForJson = Object.fromEntries(Object.entries(m).filter(([k]) => k !== '_raw_a1111'));
+  const allParamsJson = JSON.stringify(cleanForJson, null, 2);
 
   return `<h2>${escapeHtml(d._filename || 'image')}</h2>
     ${promptText ? `<div class="meta-row"><span class="k">Prompt</span><div class="v">${escapeHtml(promptText)}</div></div>` : ''}
     ${negativeText ? `<div class="meta-row"><span class="k">Negative</span><div class="v">${escapeHtml(negativeText)}</div></div>` : ''}
     ${rows.map(r => `<div class="meta-row"><span class="k">${escapeHtml(r.k)}</span><span class="v">${escapeHtml(r.v)}</span></div>`).join('')}
-    ${(rawA1111 && !hasStructured) ? `<div class="meta-row"><span class="k">Parameters</span><div class="v"><code class="triggers" style="white-space:pre-wrap;display:block;max-height:18em;overflow:auto;">${escapeHtml(rawA1111)}</code></div></div>` : ''}
-    ${(!rawA1111 && !hasStructured) ? `<div class="meta-row"><span class="k">Metadata</span><span class="v" style="opacity:.6">— none (image predates the on_image_logged hook AND has no PNG `parameters` chunk; click <code>🔄 Reindex now</code> in Fooocus to backfill) —</span></div>` : ''}
+    ${(!hasStructured && !rawA1111) ? `<div class="meta-row"><span class="k">Metadata</span><span class="v" style="opacity:.6">— none (image predates the on_image_logged hook AND has no PNG params chunk; click 🔄 Reindex now in Fooocus to backfill) —</span></div>` : ''}
     <div class="copy-row">
       ${promptText ? `<button data-copy="${escapeHtml(promptText)}">📋 Prompt</button>` : ''}
       ${negativeText ? `<button data-copy="${escapeHtml(negativeText)}">📋 Negative</button>` : ''}
-      <button data-copy="${escapeHtml(copyText)}">${copyLabel}</button>
+      <button data-copy="${escapeHtml(allParamsJson)}">📋 All params (JSON)</button>
+      ${rawA1111 ? `<button data-copy="${escapeHtml(rawA1111)}">📋 Raw A1111</button>` : ''}
     </div>`;
 }
 function captionLora(d) {
