@@ -1178,17 +1178,15 @@ with shared.gradio_root:
                         queue=False, show_progress=False,
                     )
 
-                    # Inline JS polling — Gradio 3.41's `every=` on .load()
-                    # only fires repeatedly when queue=True, which would
-                    # serialize against generation. Client-side polling
-                    # avoids both the bug and the queue interference.
-                    gr.HTML(value=r"""
-<script>
-(() => {
-  if (window._abReindexPollSetup) return;
+                    # Inject the polling JS via gradio_root.load(_js=...).
+                    # gr.HTML(value='<script>...') is stripped by Gradio's
+                    # XSS sanitizer in 3.41, but `_js=` is the official
+                    # Gradio escape hatch for arbitrary page-load JS and
+                    # runs as-is in the browser.
+                    _ab_reindex_js = r"""() => {
+  if (window._abReindexPollSetup) return [];
   window._abReindexPollSetup = true;
   let pollTimer = null;
-
   function fmtPhase(s) {
     if (!s) return '';
     if (s.phase === 'starting') return '<span style="color:#888;">Reindex starting…</span>';
@@ -1198,47 +1196,48 @@ with shared.gradio_root:
     if (s.phase === 'error')    return `<span style="color:#ff6b6b;">${s.last_summary||s.message||'Failed.'}</span>`;
     return '';
   }
-
   async function pollOnce() {
     try {
       let resp = null;
       for (const url of ['/run/ab_reindex_status', '/api/ab_reindex_status']) {
-        try { resp = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:'{"data":[]}'}); }
-        catch (_) { continue; }
+        try { resp = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:'{"data":[]}'}); } catch (_) { continue; }
         if (resp && resp.ok) break;
       }
       if (!resp || !resp.ok) return;
       const json = await resp.json();
       const s = (json && Array.isArray(json.data)) ? json.data[0] : json;
-      const el = document.getElementById('ab-status');
+      // gradio app DOM is shadowed inside <gradio-app>; resolve via window.gradioApp() if present.
+      const root = (typeof window.gradioApp === 'function') ? window.gradioApp() : document;
+      const el = root.querySelector('#ab-status') || document.getElementById('ab-status');
       if (!el || !s) return;
       const html = fmtPhase(s);
       if (html) el.innerHTML = html;
-      // Stop polling when worker is no longer running.
       if (!s.running && (s.phase === 'done' || s.phase === 'error' || s.phase === 'idle')) {
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
       }
-    } catch (e) { /* swallow — next tick */ }
+    } catch (e) { console.warn('[asset-browser] poll error:', e); }
   }
-
-  function startPoll() {
+  window._abReindexStartPoll = function() {
     if (pollTimer) clearInterval(pollTimer);
-    pollOnce();   // first hit immediate
+    pollOnce();
     pollTimer = setInterval(pollOnce, 2000);
-  }
-
-  // Attach to the Reindex button — wait for it to land in the DOM.
+  };
   function attach() {
-    const btn = document.getElementById('ab-reindex-btn');
+    const root = (typeof window.gradioApp === 'function') ? window.gradioApp() : document;
+    const btn = root.querySelector('#ab-reindex-btn') || document.getElementById('ab-reindex-btn');
     if (!btn) { setTimeout(attach, 500); return; }
     if (btn._abPollAttached) return;
     btn._abPollAttached = true;
-    btn.addEventListener('click', () => setTimeout(startPoll, 200));
+    btn.addEventListener('click', () => setTimeout(window._abReindexStartPoll, 200));
+    console.log('[asset-browser] reindex polling attached');
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach);
-  else attach();
-})();
-</script>""", visible=False)
+  attach();
+  return [];
+}"""
+                    shared.gradio_root.load(
+                        None, inputs=[], outputs=[], _js=_ab_reindex_js,
+                        queue=False, show_progress=False,
+                    )
 
                     # === Hidden API bridge for the SPA's "Fetch from CivitAI" button.
                     # Exposed via api_name so the standalone HTML can POST to it
