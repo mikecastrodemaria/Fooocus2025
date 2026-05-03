@@ -311,7 +311,9 @@ def reindex_outputs() -> tuple:
         total_images = 0
         total_days = 0
         with _lock:
-            for date_string in _scan_existing_dates(out_root):
+            all_dates = _scan_existing_dates(out_root)
+            print(f'[asset-browser] reindex starting: {len(all_dates)} date dir(s) under {out_root}')
+            for di, date_string in enumerate(all_dates, start=1):
                 date_dir = os.path.join(out_root, date_string)
                 images = []
                 for name in sorted(os.listdir(date_dir)):
@@ -327,6 +329,7 @@ def reindex_outputs() -> tuple:
                     _generate_thumbnail(image_path)
                     images.append(_build_image_entry(image_path))
                 if not images:
+                    print(f'[asset-browser]   [{di}/{len(all_dates)}] {date_string}: empty (no images)')
                     continue
                 images.sort(key=lambda x: x.get('created_at', ''), reverse=True)
                 manifest = {
@@ -337,7 +340,9 @@ def reindex_outputs() -> tuple:
                 _save_manifest(date_dir, manifest)
                 total_images += len(images)
                 total_days += 1
+                print(f'[asset-browser]   [{di}/{len(all_dates)}] {date_string}: {len(images)} image(s) -> manifest + thumbs OK')
             _refresh_days_index()
+            print(f'[asset-browser] reindex outputs done: {total_days}/{len(all_dates)} day(s) had images, {total_images} total')
 
         # Bundle the model indexer so a single Reindex click rebuilds everything.
         model_summary = ''

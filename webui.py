@@ -1127,21 +1127,24 @@ with shared.gradio_root:
                         queue=False, show_progress=False)
 
                     def _ab_reindex_now():
+                        # reindex_outputs() walks every date subdir under path_outputs,
+                        # builds thumbnails + manifests + days.json, AND chains to
+                        # model_indexer.scan_all_and_write() at the end so a single
+                        # click rebuilds *everything*. Calling scan_all_and_write()
+                        # directly would skip the outputs side entirely (bug fixed).
                         try:
-                            from modules.model_indexer import scan_all_and_write
-                            ok, summary = scan_all_and_write()
+                            from modules.gallery_writer import reindex_outputs
+                            ok, msg = reindex_outputs()
                         except Exception as e:
                             return gr.update(value=f'<span style="color:#ff6b6b;">Reindex failed: {e}</span>')
-                        if not ok:
-                            reason = summary.get('reason', 'unknown') if isinstance(summary, dict) else str(summary)
-                            return gr.update(value=f'<span style="color:#ff6b6b;">Reindex skipped: {reason}</span>')
-                        return gr.update(value=f'<span style="color:#4ecdc4;">Reindex done: {summary}</span>')
+                        color = '#4ecdc4' if ok else '#ff6b6b'
+                        return gr.update(value=f'<span style="color:{color};">{msg}</span>')
 
                     ab_reindex_btn.click(
                         _ab_reindex_now,
                         inputs=[],
                         outputs=[ab_status],
-                        queue=False, show_progress=False)
+                        queue=False, show_progress='full')
                 # === end custom-8 =================================================
                 dev_mode = gr.Checkbox(label='Developer Debug Mode', value=modules.config.default_developer_debug_mode_checkbox, container=False)
 
