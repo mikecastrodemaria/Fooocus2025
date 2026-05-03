@@ -15,6 +15,36 @@ if "GRADIO_SERVER_PORT" not in os.environ:
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
+# custom-8: silence Windows-specific asyncio noise.
+#
+# On Windows, the ProactorEventLoop logs `ConnectionResetError [WinError 10054]`
+# every time a client TCP socket is forcibly closed by the OS during clean
+# shutdown (browser closes a tab, polling tear-down, page refresh, etc.).
+# These are cosmetic — Python's asyncio.proactor_events code path tries
+# to call socket.shutdown(SHUT_RDWR) on a socket the OS has already torn
+# down. The exception is logged but does NOT indicate any real failure.
+#
+# Reference: https://github.com/python/cpython/issues/86505
+#
+# We monkey-patch the offending method to swallow only ConnectionResetError
+# and ConnectionAbortedError during this specific cleanup hook. Other real
+# errors still bubble up. No-op on non-Windows.
+if sys.platform == 'win32':
+    try:
+        import asyncio
+        import functools as _ft
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+        _orig_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+        @_ft.wraps(_orig_call_connection_lost)
+        def _silent_call_connection_lost(self, exc):
+            try:
+                return _orig_call_connection_lost(self, exc)
+            except (ConnectionResetError, ConnectionAbortedError):
+                return None  # silent: known-noise during clean tcp teardown
+        _ProactorBasePipeTransport._call_connection_lost = _silent_call_connection_lost
+    except Exception as _e:
+        print(f'[asyncio-win-noise-fix] could not install (non-fatal): {_e}')
+
 import platform
 import fooocus_version
 
