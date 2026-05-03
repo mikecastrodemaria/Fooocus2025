@@ -786,12 +786,20 @@ with shared.gradio_root:
                 def update_browser_link():
                     if args_manager.args.disable_image_log:
                         return gr.update(value='')
-                    if modules.config.asset_browser_enabled():
-                        return gr.update(value='<a href="file=outputs/index.html" target="_blank" '
-                                                'style="margin-left:12px;">\U0001F5BC️ Asset Browser</a>')
-                    return gr.update(value='<span style="margin-left:12px;color:#888;" '
-                                            'title="Enable in Advanced > Models > Asset Browser, then Restart UI">'
-                                            '\U0001F5BC️ Asset Browser (disabled)</span>')
+                    if not modules.config.asset_browser_enabled():
+                        return gr.update(value='<span style="margin-left:12px;color:#888;" '
+                                                'title="Enable in Advanced > Models > Asset Browser, then Restart UI">'
+                                                '\U0001F5BC️ Asset Browser (disabled)</span>')
+                    # Lazy-create outputs/index.html on first link render so the user
+                    # never sees a 404 just because they haven't generated yet.
+                    try:
+                        from modules.gallery_writer import ensure_gallery_assets
+                        ensure_gallery_assets()
+                    except Exception:
+                        pass
+                    abs_index = os.path.abspath(os.path.join(modules.config.path_outputs, 'index.html'))
+                    return gr.update(value=f'<a href="file={abs_index}" target="_blank" '
+                                            f'style="margin-left:12px;">\U0001F5BC️ Asset Browser</a>')
 
                 with gr.Row():
                     history_link = gr.HTML()
@@ -1071,12 +1079,19 @@ with shared.gradio_root:
                         ab_reindex_btn = gr.Button(value='\U0001F504 Reindex everything now',
                                                     variant='secondary', scale=1)
                     ab_status = gr.HTML(value='')
-                    ab_open_link = gr.HTML(
-                        value=('<a href="file=outputs/index.html" target="_blank">'
-                               '\U0001F5BC️ Open Asset Browser</a>'
-                               if _ab_cfg.get('enabled')
-                               else '<span style="color:#888;">'
-                                    '\U0001F5BC️ Asset Browser (disabled — enable above and Save)</span>'))
+                    if _ab_cfg.get('enabled'):
+                        try:
+                            from modules.gallery_writer import ensure_gallery_assets as _ab_ensure
+                            _ab_ensure()
+                        except Exception:
+                            pass
+                        _ab_abs_index = os.path.abspath(os.path.join(modules.config.path_outputs, 'index.html'))
+                        _ab_open_html = (f'<a href="file={_ab_abs_index}" target="_blank">'
+                                          '\U0001F5BC️ Open Asset Browser</a>')
+                    else:
+                        _ab_open_html = ('<span style="color:#888;">'
+                                          '\U0001F5BC️ Asset Browser (disabled — enable above and Save)</span>')
+                    ab_open_link = gr.HTML(value=_ab_open_html)
                     gr.HTML('<div style="font-size:11px;color:#888;margin-top:4px;">'
                             'Outputs gallery + LoRAs / Checkpoints / Embeddings tabs · '
                             'PhotoSwipe v5 lightbox · Dynamic Caption sidebar · '
@@ -1093,6 +1108,15 @@ with shared.gradio_root:
                             'generate_dzi_tiles': dzi,
                             'index_models_on_boot': index_boot,
                         })
+                        # If we just turned the feature on, drop the SPA assets
+                        # immediately so the user can open the Browser without
+                        # waiting for a restart or a Reindex pass.
+                        if ok and enabled:
+                            try:
+                                from modules.gallery_writer import ensure_gallery_assets
+                                ensure_gallery_assets()
+                            except Exception as _e:
+                                msg += f' (asset bootstrap warning: {_e})'
                         color = '#4ecdc4' if ok else '#ff6b6b'
                         return gr.update(value=f'<span style="color:{color};">{msg}</span>')
 
