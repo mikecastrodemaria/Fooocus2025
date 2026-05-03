@@ -27,6 +27,15 @@ import threading
 import modules.config
 from modules.util import get_file_from_folder_list
 
+# Sidecar previews from CivitAI sometimes ship huge — disable Pillow's
+# decompression-bomb warning/error so the indexer doesn't spam the console
+# nor refuse to thumbnail oversize previews. We trust our local model dir.
+try:
+    from PIL import Image as _PILImage
+    _PILImage.MAX_IMAGE_PIXELS = None
+except Exception:
+    pass
+
 
 # --------------------------------------------------------------------------
 # Constants

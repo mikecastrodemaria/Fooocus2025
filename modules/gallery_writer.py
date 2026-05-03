@@ -19,6 +19,17 @@ import threading
 
 import modules.config
 
+# Pillow's DecompressionBombWarning fires above ~89 MP (default
+# MAX_IMAGE_PIXELS). Fooocus's own Upscale (2x) on a 4K canvas easily
+# crosses that. We trust our own outputs, so disable the check for the
+# whole process. This also silences the matching DecompressionBombError
+# at 2x the threshold.
+try:
+    from PIL import Image as _PILImage
+    _PILImage.MAX_IMAGE_PIXELS = None
+except Exception:
+    pass
+
 # --------------------------------------------------------------------------
 # Constants & paths
 # --------------------------------------------------------------------------
