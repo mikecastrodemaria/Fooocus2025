@@ -149,4 +149,12 @@ config.default_base_model_name, config.checkpoint_downloads = download_models(
 config.update_files()
 init_cache(config.model_filenames, config.paths_checkpoints, config.lora_filenames, config.paths_loras)
 
+# custom-8: spawn Asset Browser model indexer in a daemon thread.
+# No-op when asset_browser.enabled = False (default) — see modules/model_indexer.py.
+try:
+    from modules.model_indexer import maybe_start_boot_scan as _ab_maybe_start_boot_scan
+    _ab_maybe_start_boot_scan()
+except Exception as _ab_boot_e:
+    print(f'[asset-browser] boot indexer failed (ignored): {_ab_boot_e}')
+
 from webui import *

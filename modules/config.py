@@ -493,6 +493,69 @@ default_inpaint_engine_version = get_config_item_or_set_default(
     validator=lambda x: x in modules.flags.inpaint_engine_versions,
     expected_type=str
 )
+
+# === custom-8: Asset Browser (autonomous module, OFF by default) ===
+# Toggle is non-negotiable — when enabled=False the gallery writer + model
+# indexer must have <1µs overhead so users on old hardware see zero impact.
+_asset_browser_defaults = {
+    'enabled': False,
+    'generate_thumbnails': True,        # ~10ms per image when enabled
+    'generate_dzi_tiles': 'auto',       # 'auto' (>4MP), 'always', 'never'
+    'index_models_on_boot': True,       # ~2-5s in daemon thread when enabled
+}
+asset_browser_config = get_config_item_or_set_default(
+    key='asset_browser',
+    default_value=dict(_asset_browser_defaults),
+    validator=lambda x: isinstance(x, dict),
+    expected_type=dict
+)
+# Backfill any missing sub-keys so newer defaults appear without losing user edits.
+for _k, _v in _asset_browser_defaults.items():
+    asset_browser_config.setdefault(_k, _v)
+
+
+def asset_browser_setting(key, default=None):
+    """Safe getter for any asset_browser sub-key. Used everywhere instead of
+    direct dict access so a malformed config.txt never crashes the hook.
+    """
+    if key in _asset_browser_defaults and default is None:
+        default = _asset_browser_defaults[key]
+    try:
+        return asset_browser_config.get(key, default)
+    except Exception:
+        return default
+
+
+def asset_browser_enabled():
+    """Single-call hot-path check. Safe even if config_dict is missing."""
+    try:
+        return bool(asset_browser_config.get('enabled', False))
+    except Exception:
+        return False
+
+
+def write_asset_browser_settings(updates: dict) -> tuple:
+    """Persist user toggles back to config.txt. Returns (ok, message)."""
+    try:
+        if not isinstance(updates, dict):
+            return False, 'Invalid settings payload.'
+        cleaned = {}
+        for k, v in updates.items():
+            if k not in _asset_browser_defaults:
+                continue
+            if k == 'generate_dzi_tiles':
+                if v not in ('auto', 'always', 'never'):
+                    continue
+            else:
+                v = bool(v)
+            cleaned[k] = v
+        asset_browser_config.update(cleaned)
+        config_dict['asset_browser'] = asset_browser_config
+        with open(config_path, 'w', encoding='utf-8') as _f:
+            json.dump(config_dict, _f, indent=4, ensure_ascii=False)
+        return True, 'Asset Browser settings saved. Restart UI for changes to take full effect.'
+    except Exception as _e:
+        return False, f'Could not write config.txt: {_e}'
 default_selected_image_input_tab_id = get_config_item_or_set_default(
     key='default_selected_image_input_tab_id',
     default_value=modules.flags.default_input_image_tab,

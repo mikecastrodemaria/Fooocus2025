@@ -134,4 +134,13 @@ def log(img, metadata, metadata_parser: MetadataParser | None = None, output_for
 
     log_cache[html_name] = middle_part
 
+    # custom-8: silent hook into the Asset Browser. Wrapped so any bug in the
+    # gallery writer can NEVER break image generation. The hook itself is a
+    # no-op (<1µs) when asset_browser.enabled = False (the default).
+    try:
+        from modules.gallery_writer import on_image_logged as _ab_on_image_logged
+        _ab_on_image_logged(local_temp_filename, metadata, task=task)
+    except Exception as _ab_e:
+        print(f'[asset-browser] hook failed (ignored): {_ab_e}')
+
     return local_temp_filename

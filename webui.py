@@ -781,8 +781,23 @@ with shared.gradio_root:
 
                     return gr.update(value=f'<a href="file={get_current_html_path(output_format)}" target="_blank">\U0001F4DA History Log</a>')
 
-                history_link = gr.HTML()
+                # custom-8: Asset Browser shortcut. Enabled = clickable link;
+                # disabled = greyed-out hint pointing to the toggle in Advanced.
+                def update_browser_link():
+                    if args_manager.args.disable_image_log:
+                        return gr.update(value='')
+                    if modules.config.asset_browser_enabled():
+                        return gr.update(value='<a href="file=outputs/index.html" target="_blank" '
+                                                'style="margin-left:12px;">\U0001F5BC️ Asset Browser</a>')
+                    return gr.update(value='<span style="margin-left:12px;color:#888;" '
+                                            'title="Enable in Advanced > Models > Asset Browser, then Restart UI">'
+                                            '\U0001F5BC️ Asset Browser (disabled)</span>')
+
+                with gr.Row():
+                    history_link = gr.HTML()
+                    browser_link = gr.HTML()
                 shared.gradio_root.load(update_history_link, outputs=history_link, queue=False, show_progress=False)
+                shared.gradio_root.load(update_browser_link, outputs=browser_link, queue=False, show_progress=False)
 
             with gr.Tab(label='Styles', elem_classes=['style_selections_tab']):
                 style_sorter.try_load_sorted_styles(
@@ -1023,6 +1038,83 @@ with shared.gradio_root:
                                       value=modules.config.default_sample_sharpness,
                                       info='Higher value means image and texture are sharper.')
                 gr.HTML('<a href="https://github.com/lllyasviel/Fooocus/discussions/117" target="_blank">\U0001F4D4 Documentation</a>')
+
+                # === custom-8: Asset Browser settings ============================
+                _ab_cfg = modules.config.asset_browser_config
+                _ab_state_label = '(off)' if not _ab_cfg.get('enabled') else '(on)'
+                with gr.Accordion(label=f'\U0001F5BC️ Asset Browser {_ab_state_label}',
+                                   open=False, elem_id='asset_browser_accordion'):
+                    gr.HTML('<div style="font-size:12px;color:#888;margin-bottom:6px;">'
+                            'Standalone HTML gallery for outputs + LoRAs/Checkpoints/Embeddings previews. '
+                            'Opens in a new browser tab. <b>OFF by default</b>: when disabled, this feature '
+                            'has &lt;1µs overhead and never touches Fooocus generation.'
+                            '</div>')
+                    ab_enabled = gr.Checkbox(
+                        label='Enable Asset Browser',
+                        value=bool(_ab_cfg.get('enabled', False)),
+                        info='Master switch. Restart UI required for full effect.')
+                    with gr.Group():
+                        ab_thumbs = gr.Checkbox(
+                            label='Generate thumbnails on save (~10ms / image)',
+                            value=bool(_ab_cfg.get('generate_thumbnails', True)))
+                        ab_dzi = gr.Radio(
+                            label='Deep-zoom tiles for big images',
+                            choices=['auto', 'always', 'never'],
+                            value=str(_ab_cfg.get('generate_dzi_tiles', 'auto')),
+                            info="'auto' tiles only images > 4 MP (~150ms when triggered).")
+                        ab_index_boot = gr.Checkbox(
+                            label='Index models on startup (~2-5s in background thread)',
+                            value=bool(_ab_cfg.get('index_models_on_boot', True)))
+                    with gr.Row():
+                        ab_save_btn = gr.Button(value='\U0001F4BE Save settings',
+                                                 variant='primary', scale=1)
+                        ab_reindex_btn = gr.Button(value='\U0001F504 Reindex everything now',
+                                                    variant='secondary', scale=1)
+                    ab_status = gr.HTML(value='')
+                    ab_open_link = gr.HTML(
+                        value=('<a href="file=outputs/index.html" target="_blank">'
+                               '\U0001F5BC️ Open Asset Browser</a>'
+                               if _ab_cfg.get('enabled')
+                               else '<span style="color:#888;">'
+                                    '\U0001F5BC️ Asset Browser (disabled — enable above and Save)</span>'))
+                    gr.HTML('<div style="font-size:11px;color:#888;margin-top:4px;">'
+                            'Status: <b>M1 (Foundation)</b> shipped — toggle + plumbing only. '
+                            'M2 ships the actual gallery writer + model indexer; M3 the SPA frontend.'
+                            '</div>')
+
+                    def _ab_save_and_status(enabled, thumbs, dzi, index_boot):
+                        ok, msg = modules.config.write_asset_browser_settings({
+                            'enabled': enabled,
+                            'generate_thumbnails': thumbs,
+                            'generate_dzi_tiles': dzi,
+                            'index_models_on_boot': index_boot,
+                        })
+                        color = '#4ecdc4' if ok else '#ff6b6b'
+                        return gr.update(value=f'<span style="color:{color};">{msg}</span>')
+
+                    ab_save_btn.click(
+                        _ab_save_and_status,
+                        inputs=[ab_enabled, ab_thumbs, ab_dzi, ab_index_boot],
+                        outputs=[ab_status],
+                        queue=False, show_progress=False)
+
+                    def _ab_reindex_now():
+                        try:
+                            from modules.model_indexer import scan_all_and_write
+                            ok, summary = scan_all_and_write()
+                        except Exception as e:
+                            return gr.update(value=f'<span style="color:#ff6b6b;">Reindex failed: {e}</span>')
+                        if not ok:
+                            reason = summary.get('reason', 'unknown') if isinstance(summary, dict) else str(summary)
+                            return gr.update(value=f'<span style="color:#ff6b6b;">Reindex skipped: {reason}</span>')
+                        return gr.update(value=f'<span style="color:#4ecdc4;">Reindex done: {summary}</span>')
+
+                    ab_reindex_btn.click(
+                        _ab_reindex_now,
+                        inputs=[],
+                        outputs=[ab_status],
+                        queue=False, show_progress=False)
+                # === end custom-8 =================================================
                 dev_mode = gr.Checkbox(label='Developer Debug Mode', value=modules.config.default_developer_debug_mode_checkbox, container=False)
 
                 with gr.Column(visible=modules.config.default_developer_debug_mode_checkbox) as dev_tools:
