@@ -330,6 +330,20 @@ def reindex_outputs() -> tuple:
                 total_images += len(images)
                 total_days += 1
             _refresh_days_index()
-        return True, f'Reindex complete: {total_days} day(s), {total_images} image(s).'
+
+        # Bundle the model indexer so a single Reindex click rebuilds everything.
+        model_summary = ''
+        try:
+            from modules.model_indexer import scan_all_and_write
+            mok, msummary = scan_all_and_write()
+            if mok:
+                model_summary = (f' · models: {msummary.get("loras", 0)} LoRAs, '
+                                 f'{msummary.get("checkpoints", 0)} ckpts, '
+                                 f'{msummary.get("embeddings", 0)} embeds')
+        except Exception as me:
+            model_summary = f' (model scan failed: {me})'
+
+        return True, (f'Reindex complete: {total_days} day(s), '
+                       f'{total_images} image(s).{model_summary}')
     except Exception as e:
         return False, f'Reindex failed: {e}'
