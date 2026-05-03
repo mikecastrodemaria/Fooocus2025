@@ -3,6 +3,16 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-8.1] — 2026-05-03 — Blur NSFW + Hide days/subfolders
+### Added
+- **NSFW thumbnail blur** — new `asset_browser.blur_thumbnails` config (default `false`) + UI checkbox in the Advanced > 🖼️ Asset Browser accordion. When ON, the SPA blurs every thumbnail (`filter: blur(20px) saturate(0.7)`); hover or click reveals individually. The Browser header has a 🌫️ Blur toggle that lets each user override the config default temporarily (sticky in browser localStorage). Useful on shared screens / NSFW-adjacent collections.
+- **Hide / show days and model subfolders** — pure SPA / localStorage feature (no Fooocus changes for the per-item state, keeps autonomy intact). Hovering on any sidebar item reveals a small `🚫 hide` button; clicking it removes the item from the list. The header has a `👁️ Hidden` badge with the count of hidden items; clicking the badge toggles "show hidden" mode where they reappear greyed-out with a `↩ unhide` button. Storage scope is per-tab (`outputs:days` / `loras:subfolders` / `checkpoints:subfolders` / `embeddings:subfolders`) — hiding e.g. a Flux subfolder in the LoRAs tab doesn't affect the same folder anywhere else. Hidden items are also filtered out of the grid in `__all__` view of model tabs unless show-hidden is on.
+- **`outputs/_index/spa_settings.json`** — new JSON written by `gallery_writer.ensure_gallery_assets()` mirroring the SPA-relevant subset of `asset_browser` config (`blur_thumbnails`, `thumbnail_size`, `generated_at`). Keeps the SPA fully autonomous (no Gradio endpoint) while letting Fooocus push defaults to it.
+### Changed
+- `modules/config.py` — `_asset_browser_defaults` extended with `blur_thumbnails: false`; `write_asset_browser_settings()` validator includes it in `_bool_keys`.
+- `webui.py` — Asset Browser accordion gains the 🌫️ Blur checkbox; `_ab_save_and_status` now persists 5 keys instead of 4 and refreshes `spa_settings.json` automatically when saving.
+- `gallery_template/index.html` — header gains a right-side toggle cluster (🌫️ Blur, 👁️ Hidden); CSS adds `.blur-active` body class + per-item hide button + greyed `.hidden-row` style; new vanilla-JS `State` module (~80 lines) handles localStorage round-trip + delegated hide/unhide click handler + boot-time spa_settings.json fetch.
+
 ## [config extension] — 2026-05-03 (post-custom-8)
 ### Added
 - **`path_civitai_cache`** in `config.txt` — was hardcoded `./civitai_cache`, now configurable. Default value preserves the historical behaviour, so existing installs see no change. Useful when the user wants the CivitAI response cache on a different drive (large LoRA collections + checkpoints can produce hundreds of MB of cache).

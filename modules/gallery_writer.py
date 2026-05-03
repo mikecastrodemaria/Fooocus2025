@@ -108,6 +108,19 @@ def ensure_gallery_assets() -> bool:
                         shutil.copy2(src_f, dst_f)
 
         os.makedirs(_index_dir(), exist_ok=True)
+        # Mirror the SPA-relevant subset of asset_browser config so the
+        # standalone HTML can read it via fetch() — keeps the SPA fully
+        # autonomous (no Gradio endpoint needed).
+        try:
+            spa_settings = {
+                'blur_thumbnails': bool(modules.config.asset_browser_setting('blur_thumbnails', False)),
+                'thumbnail_size': int(modules.config.asset_browser_setting('thumbnail_size', 256)),
+                'generated_at': datetime.datetime.now().isoformat(timespec='seconds'),
+            }
+            with open(os.path.join(_index_dir(), 'spa_settings.json'), 'w', encoding='utf-8') as _sf:
+                json.dump(spa_settings, _sf, indent=2)
+        except Exception as _se:
+            print(f'[asset-browser] could not write spa_settings.json: {_se}')
         return True
     except Exception as e:
         print(f'[asset-browser] ensure_gallery_assets failed: {e}')

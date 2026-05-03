@@ -54,12 +54,56 @@
     display: flex; justify-content: space-between; align-items: center;
     padding: 6px 10px; border-radius: 4px; cursor: pointer;
     color: var(--text); font-size: 13px;
+    position: relative;
   }
   aside .item:hover { background: #2a2a2a; }
   aside .item.active { background: var(--accent); color: #000; }
   aside .item .count { font-size: 11px; opacity: 0.7; }
   aside .item.today { font-weight: bold; }
   aside .item.today::before { content: '● '; color: var(--accent-2); }
+  /* Hide/show toggle button — appears on hover. */
+  aside .item .hide-btn {
+    display: none; position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    background: rgba(0,0,0,0.65); color: var(--text); border: 0;
+    border-radius: 3px; cursor: pointer; font-size: 10px; padding: 2px 5px;
+    line-height: 1.1;
+  }
+  aside .item:hover .hide-btn { display: inline-block; }
+  aside .item:hover .count { display: none; }
+  aside .item.hidden-row {
+    opacity: 0.45; font-style: italic;
+  }
+  aside .item.hidden-row .hide-btn { display: inline-block; background: rgba(78,205,196,0.18); }
+
+  /* Header right cluster: extra toggles + tabs. */
+  header .right {
+    display: flex; align-items: center; gap: 10px;
+  }
+  header .toggles { display: flex; gap: 4px; }
+  header .toggles button {
+    background: transparent; color: var(--muted); border: 1px solid var(--border);
+    padding: 4px 9px; border-radius: 5px; cursor: pointer; font-size: 12px;
+    line-height: 1.2;
+  }
+  header .toggles button:hover { background: #2a2a2a; color: var(--text); }
+  header .toggles button.on {
+    background: rgba(187,134,252,0.18); color: var(--accent); border-color: var(--accent);
+  }
+  header .toggles button .pill {
+    margin-left: 4px; background: var(--accent); color: #000;
+    border-radius: 8px; padding: 0 5px; font-size: 10px; font-weight: bold;
+  }
+
+  /* NSFW blur — applied to <img> inside .card; hover/click reveals. */
+  body.blur-active main .card img {
+    filter: blur(20px) saturate(0.7);
+    transition: filter 0.18s ease;
+  }
+  body.blur-active main .card:hover img,
+  body.blur-active main .card.unblur img {
+    filter: none;
+  }
+  body.blur-active main .card .label::before { content: '\1F32B  '; }
   main { overflow-y: auto; padding: 12px; }
   main .grid {
     display: grid; gap: 8px;
@@ -141,12 +185,18 @@
 <body>
 <header>
   <h1>🖼️ Fooocus2025 — Asset Browser <span class="badge" id="badge-status">M3 · PhotoSwipe lightbox</span></h1>
-  <nav class="tabs" id="tabs">
-    <button class="active" data-tab="outputs">📅 Outputs</button>
-    <button data-tab="loras">🎨 LoRAs</button>
-    <button data-tab="checkpoints">📦 Models</button>
-    <button data-tab="embeddings">🧩 Embeddings</button>
-  </nav>
+  <div class="right">
+    <div class="toggles" id="header-toggles">
+      <button id="btn-blur"        title="Blur all thumbnails (NSFW privacy). Hover or click to reveal individually.">🌫️ Blur</button>
+      <button id="btn-show-hidden" title="Reveal hidden days / subfolders (use the eye-slash button on each item to hide it).">👁️ Hidden</button>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="active" data-tab="outputs">📅 Outputs</button>
+      <button data-tab="loras">🎨 LoRAs</button>
+      <button data-tab="checkpoints">📦 Models</button>
+      <button data-tab="embeddings">🧩 Embeddings</button>
+    </nav>
+  </div>
 </header>
 
 <div class="layout">
@@ -203,6 +253,101 @@ async function fetchJson(path) {
 }
 
 function renderEmpty(target, msg) { target.innerHTML = `<div class="empty">${msg}</div>`; }
+
+// =================== Hide / Blur state (localStorage-backed) ===================
+//
+// `hidden` is a per-scope set of keys (e.g. scope='outputs:days', key='2024-05-22').
+// `blur` reads the SPA default from _index/spa_settings.json AND a localStorage
+// override (so user can flip it temporarily on a shared machine). `showHidden`
+// is a transient view mode — when ON, hidden items reappear greyed with an
+// unhide button.
+const LS_HIDDEN     = 'fooocus2025_assetbrowser_hidden';
+const LS_BLUR_OVR   = 'fooocus2025_assetbrowser_blur_override';   // null | 'on' | 'off'
+const State = {
+  spaSettings: { blur_thumbnails: false },   // populated from spa_settings.json on init
+  hidden: { /* "outputs:days": Set, "loras:subfolders": Set, ... */ },
+  showHidden: false,
+  blurActive: false,
+  _hiddenChangeListeners: [],
+  loadHidden() {
+    try {
+      const raw = localStorage.getItem(LS_HIDDEN);
+      const obj = raw ? JSON.parse(raw) : {};
+      this.hidden = {};
+      for (const k of Object.keys(obj || {})) {
+        this.hidden[k] = new Set(Array.isArray(obj[k]) ? obj[k] : []);
+      }
+    } catch (e) { this.hidden = {}; }
+  },
+  saveHidden() {
+    const out = {};
+    for (const k of Object.keys(this.hidden)) {
+      out[k] = Array.from(this.hidden[k]);
+    }
+    try { localStorage.setItem(LS_HIDDEN, JSON.stringify(out)); } catch (e) {}
+    for (const cb of this._hiddenChangeListeners) { try { cb(); } catch (_) {} }
+  },
+  isHidden(scope, key) {
+    return this.hidden[scope] && this.hidden[scope].has(key);
+  },
+  toggleHidden(scope, key) {
+    if (!this.hidden[scope]) this.hidden[scope] = new Set();
+    if (this.hidden[scope].has(key)) this.hidden[scope].delete(key);
+    else this.hidden[scope].add(key);
+    this.saveHidden();
+  },
+  totalHiddenCount() {
+    let n = 0;
+    for (const k of Object.keys(this.hidden)) n += this.hidden[k].size;
+    return n;
+  },
+  onHiddenChange(cb) { this._hiddenChangeListeners.push(cb); },
+
+  effectiveBlur() {
+    const ovr = localStorage.getItem(LS_BLUR_OVR);
+    if (ovr === 'on') return true;
+    if (ovr === 'off') return false;
+    return !!this.spaSettings.blur_thumbnails;
+  },
+  setBlurOverride(val) {
+    if (val === null) localStorage.removeItem(LS_BLUR_OVR);
+    else localStorage.setItem(LS_BLUR_OVR, val ? 'on' : 'off');
+    this.applyBlur();
+  },
+  applyBlur() {
+    this.blurActive = this.effectiveBlur();
+    document.body.classList.toggle('blur-active', this.blurActive);
+    document.getElementById('btn-blur').classList.toggle('on', this.blurActive);
+  },
+};
+State.loadHidden();
+
+// Render badge "👁️ Hidden +N" + active state.
+function refreshHeaderToggles() {
+  const n = State.totalHiddenCount();
+  const btnHidden = document.getElementById('btn-show-hidden');
+  btnHidden.classList.toggle('on', State.showHidden);
+  btnHidden.innerHTML = State.showHidden
+    ? `\u{1F441}\u{FE0F} Hidden${n ? ` <span class="pill">${n}</span>` : ' (none)'}`
+    : `\u{1F441}\u{FE0F} Hidden${n ? ` <span class="pill">${n}</span>` : ''}`;
+}
+
+// Sidebar item HTML helper — adds the hide/unhide button + greyed style.
+function sidebarItemHtml(opts) {
+  // opts: { scope, key, label, count, classes:[], active:bool }
+  const isHidden = State.isHidden(opts.scope, opts.key);
+  if (isHidden && !State.showHidden) return '';   // filtered out
+  const classes = ['item', ...(opts.classes || [])];
+  if (isHidden) classes.push('hidden-row');
+  if (opts.active) classes.push('active');
+  const btn = isHidden
+    ? `<button class="hide-btn" data-toggle-hide="${escapeHtml(opts.scope)}|${escapeHtml(opts.key)}" title="Unhide">↩ unhide</button>`
+    : `<button class="hide-btn" data-toggle-hide="${escapeHtml(opts.scope)}|${escapeHtml(opts.key)}" title="Hide from list">\u{1F6AB} hide</button>`;
+  const countStr = (opts.count != null) ? `<span class="count">${opts.count}</span>` : '';
+  return `<div class="${classes.join(' ')}" data-key="${escapeHtml(opts.key)}">
+    <span>${escapeHtml(opts.label)}</span>${countStr}${btn}
+  </div>`;
+}
 
 // --------- Clipboard helper for the caption Copy buttons ----------
 function copyToClipboard(text, btn) {
@@ -374,12 +519,18 @@ const Outputs = {
   },
   renderSidebar() {
     if (this.days.length === 0) { renderEmpty($sidebarList, 'No days indexed.'); return; }
-    $sidebarList.innerHTML = this.days.map(d => `
-      <div class="item${d.date === this.today ? ' today' : ''}${d.date === this.activeDate ? ' active' : ''}" data-date="${escapeHtml(d.date)}">
-        <span>${escapeHtml(d.date)}</span><span class="count">${d.count}</span>
-      </div>`).join('');
-    $sidebarList.querySelectorAll('.item').forEach(el =>
-      el.addEventListener('click', () => this.loadDay(el.dataset.date)));
+    const html = this.days.map(d => sidebarItemHtml({
+      scope: 'outputs:days', key: d.date, label: d.date, count: d.count,
+      classes: d.date === this.today ? ['today'] : [],
+      active: d.date === this.activeDate,
+    })).join('');
+    $sidebarList.innerHTML = html || '<div class="empty">All days hidden — click 👁️ Hidden in the header.</div>';
+    $sidebarList.querySelectorAll('.item').forEach(el => {
+      el.addEventListener('click', (ev) => {
+        if (ev.target.closest('.hide-btn')) return;   // handled by global delegate
+        this.loadDay(el.dataset.key);
+      });
+    });
   },
   async loadDay(date) {
     this.activeDate = date;
@@ -451,26 +602,40 @@ function buildModelsTab(kind, opts) {
     },
     renderSidebar() {
       const total = this.items.length;
+      const scope = `${this.kind}:subfolders`;
+      // 'All' is always shown — it's a virtual entry, can't be hidden.
       const head = `<div class="item${this.activeSubfolder === '__all__' ? ' active' : ''}" data-sub="__all__">
           <span>All</span><span class="count">${total}</span></div>`;
-      const rest = this.subfolders.map(sf => {
-        const label = sf.name === '.' ? '(root)' : sf.name;
-        return `<div class="item${this.activeSubfolder === sf.name ? ' active' : ''}" data-sub="${escapeHtml(sf.name)}">
-          <span>${escapeHtml(label)}</span><span class="count">${sf.count}</span></div>`;
-      }).join('');
+      const rest = this.subfolders.map(sf => sidebarItemHtml({
+        scope, key: sf.name,
+        label: sf.name === '.' ? '(root)' : sf.name,
+        count: sf.count,
+        active: this.activeSubfolder === sf.name,
+      })).join('');
       $sidebarList.innerHTML = head + rest;
       $sidebarList.querySelectorAll('.item').forEach(el => {
-        el.addEventListener('click', () => {
-          this.activeSubfolder = el.dataset.sub;
+        el.addEventListener('click', (ev) => {
+          if (ev.target.closest('.hide-btn')) return;
+          // 'All' uses data-sub, sub-folders use data-key (from sidebarItemHtml).
+          const sub = el.dataset.sub != null ? el.dataset.sub : el.dataset.key;
+          this.activeSubfolder = sub;
           this.renderSidebar(); this.renderGrid();
         });
       });
     },
     async renderGrid() {
-      const filtered = this.activeSubfolder === '__all__'
-        ? this.items
-        : this.items.filter(it => (it.subfolder || '.') === this.activeSubfolder);
-      if (filtered.length === 0) { renderEmpty($main, 'Nothing in this subfolder.'); return; }
+      const scope = `${this.kind}:subfolders`;
+      // Filter out items whose subfolder is hidden — unless 'show hidden' is on
+      // OR the active subfolder is exactly that hidden one (user navigated to it).
+      const subfolderVisible = (sf) => {
+        if (State.showHidden) return true;
+        if (this.activeSubfolder !== '__all__' && this.activeSubfolder === sf) return true;
+        return !State.isHidden(scope, sf);
+      };
+      const filtered = (this.activeSubfolder === '__all__'
+        ? this.items.filter(it => subfolderVisible(it.subfolder || '.'))
+        : this.items.filter(it => (it.subfolder || '.') === this.activeSubfolder));
+      if (filtered.length === 0) { renderEmpty($main, 'Nothing to show here.'); return; }
 
       // Slides for lightbox: we use the 256x256 preview as src (M3 limitation
       // — no full-res sidecar pass-through yet). DeepZoom plugin still allows
@@ -545,9 +710,58 @@ $tabs.querySelectorAll('button').forEach(b => {
   b.addEventListener('click', () => setActiveTab(b.dataset.tab));
 });
 
-// Initial tab from URL hash, fallback to outputs.
-const initial = (window.location.hash || '#outputs').replace('#', '');
-setActiveTab(tabs[initial] ? initial : 'outputs');
+// =================== Header toggles + delegated hide/unhide ===================
+let _activeTabName = 'outputs';
+function _reInitActiveTab() { if (tabs[_activeTabName]) tabs[_activeTabName].init(); }
+
+document.getElementById('btn-blur').addEventListener('click', () => {
+  // Cycle: default -> opposite override -> back to default.
+  const cur = State.effectiveBlur();
+  const ovr = localStorage.getItem(LS_BLUR_OVR);
+  if (ovr === null) {
+    State.setBlurOverride(!State.spaSettings.blur_thumbnails);
+  } else {
+    State.setBlurOverride(null);
+    State.applyBlur();
+  }
+});
+document.getElementById('btn-show-hidden').addEventListener('click', () => {
+  State.showHidden = !State.showHidden;
+  refreshHeaderToggles();
+  _reInitActiveTab();   // re-render the current tab so hidden items come back / disappear
+});
+
+// Delegated click for hide/unhide buttons in the sidebar.
+document.addEventListener('click', (ev) => {
+  const t = ev.target.closest('[data-toggle-hide]');
+  if (!t) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const [scope, key] = t.getAttribute('data-toggle-hide').split('|');
+  State.toggleHidden(scope, key);
+  refreshHeaderToggles();
+  _reInitActiveTab();
+});
+
+// Wrap setActiveTab to remember the active tab name (so re-renders go to the right place).
+const _origSetActiveTab = setActiveTab;
+setActiveTab = function(name) {
+  _activeTabName = name;
+  return _origSetActiveTab(name);
+};
+
+// =================== Boot ===================
+(async () => {
+  // Load SPA-side settings (blur default written by gallery_writer.ensure_gallery_assets).
+  const s = await fetchJson('./_index/spa_settings.json');
+  if (s && typeof s === 'object') State.spaSettings = Object.assign(State.spaSettings, s);
+  State.applyBlur();
+  refreshHeaderToggles();
+
+  // Initial tab from URL hash, fallback to outputs.
+  const initial = (window.location.hash || '#outputs').replace('#', '');
+  setActiveTab(tabs[initial] ? initial : 'outputs');
+})();
 </script>
 </body>
 </html>

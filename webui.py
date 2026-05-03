@@ -1073,6 +1073,10 @@ with shared.gradio_root:
                         ab_index_boot = gr.Checkbox(
                             label='Index models on startup (~2-5s in background thread)',
                             value=bool(_ab_cfg.get('index_models_on_boot', True)))
+                        ab_blur = gr.Checkbox(
+                            label='\U0001F32B Blur thumbnails by default (NSFW privacy — hover/click to reveal)',
+                            value=bool(_ab_cfg.get('blur_thumbnails', False)),
+                            info='Sets the SPA default. Users can toggle on/off temporarily from the Browser header (sticky in browser localStorage).')
                     with gr.Row():
                         ab_save_btn = gr.Button(value='\U0001F4BE Save settings',
                                                  variant='primary', scale=1)
@@ -1101,16 +1105,17 @@ with shared.gradio_root:
                             '(all gitignored).'
                             '</div>')
 
-                    def _ab_save_and_status(enabled, thumbs, dzi, index_boot):
+                    def _ab_save_and_status(enabled, thumbs, dzi, index_boot, blur):
                         ok, msg = modules.config.write_asset_browser_settings({
                             'enabled': enabled,
                             'generate_thumbnails': thumbs,
                             'generate_dzi_tiles': dzi,
                             'index_models_on_boot': index_boot,
+                            'blur_thumbnails': blur,
                         })
-                        # If we just turned the feature on, drop the SPA assets
-                        # immediately so the user can open the Browser without
-                        # waiting for a restart or a Reindex pass.
+                        # If we just turned the feature on (or saved any change while
+                        # enabled), drop the SPA assets + refresh spa_settings.json
+                        # so the Browser picks up the new defaults on next reload.
                         if ok and enabled:
                             try:
                                 from modules.gallery_writer import ensure_gallery_assets
@@ -1122,7 +1127,7 @@ with shared.gradio_root:
 
                     ab_save_btn.click(
                         _ab_save_and_status,
-                        inputs=[ab_enabled, ab_thumbs, ab_dzi, ab_index_boot],
+                        inputs=[ab_enabled, ab_thumbs, ab_dzi, ab_index_boot, ab_blur],
                         outputs=[ab_status],
                         queue=False, show_progress=False)
 

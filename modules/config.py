@@ -513,6 +513,7 @@ _asset_browser_defaults = {
     'thumbnail_quality': 85,            # JPEG quality 1-100. 70 ~halves disk usage vs 85.
     'dzi_threshold_mp': 4.0,            # only kicks in when generate_dzi_tiles='auto'.
     'placeholder_label_max': 24,        # filename length on placeholder images before truncation.
+    'blur_thumbnails': False,           # SPA default: blur all thumbs, hover/click reveals (NSFW privacy).
 }
 asset_browser_config = get_config_item_or_set_default(
     key='asset_browser',
@@ -551,7 +552,7 @@ def write_asset_browser_settings(updates: dict) -> tuple:
     Each known sub-key has its own validator/clamp so a malformed UI value
     can never poison config.txt. Unknown keys are silently dropped.
     """
-    _bool_keys = {'enabled', 'generate_thumbnails', 'index_models_on_boot'}
+    _bool_keys = {'enabled', 'generate_thumbnails', 'index_models_on_boot', 'blur_thumbnails'}
     try:
         if not isinstance(updates, dict):
             return False, 'Invalid settings payload.'
