@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fooocus2025 — Asset Browser</title>
+<style>
+  /* ---- M2a: minimal vanilla styles. M3 will replace with PhotoSwipe themed CSS. ---- */
+  :root {
+    --bg: #121212;
+    --panel: #1c1c1c;
+    --border: #2c2c2c;
+    --text: #e0e0e0;
+    --muted: #888;
+    --accent: #bb86fc;
+    --accent-2: #4ecdc4;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    height: 100vh; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  header h1 {
+    margin: 0; font-size: 16px; font-weight: 500;
+  }
+  header h1 .badge {
+    margin-left: 10px; padding: 2px 8px; border-radius: 4px;
+    background: #333; color: var(--muted); font-size: 11px;
+  }
+  nav.tabs { display: flex; gap: 4px; }
+  nav.tabs button {
+    background: transparent; color: var(--text);
+    border: 1px solid var(--border); padding: 6px 14px; border-radius: 6px;
+    cursor: pointer; font-size: 13px;
+  }
+  nav.tabs button:hover { background: #2a2a2a; }
+  nav.tabs button.active { background: var(--accent); color: #000; border-color: var(--accent); }
+  nav.tabs button[disabled] { opacity: 0.4; cursor: not-allowed; }
+  .layout {
+    display: grid; grid-template-columns: 220px 1fr; height: calc(100vh - 53px);
+  }
+  aside {
+    background: var(--panel); border-right: 1px solid var(--border);
+    overflow-y: auto; padding: 8px;
+  }
+  aside h3 {
+    margin: 8px 8px 4px; font-size: 11px; text-transform: uppercase;
+    color: var(--muted); letter-spacing: 0.05em;
+  }
+  aside .day {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 10px; border-radius: 4px; cursor: pointer;
+    color: var(--text); font-size: 13px;
+  }
+  aside .day:hover { background: #2a2a2a; }
+  aside .day.active { background: var(--accent); color: #000; }
+  aside .day .count {
+    font-size: 11px; opacity: 0.7;
+  }
+  aside .day.today { font-weight: bold; }
+  aside .day.today::before { content: '● '; color: var(--accent-2); }
+  main {
+    overflow-y: auto; padding: 12px;
+  }
+  main .grid {
+    display: grid; gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+  main .grid a {
+    display: block; aspect-ratio: 1 / 1; background: #000; border-radius: 6px;
+    overflow: hidden; text-decoration: none; position: relative;
+  }
+  main .grid img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+    transition: transform 0.2s ease;
+  }
+  main .grid a:hover img { transform: scale(1.04); }
+  main .grid .label {
+    position: absolute; left: 6px; bottom: 6px; right: 6px;
+    background: rgba(0,0,0,0.65); color: #fff; padding: 2px 6px;
+    font-size: 10px; border-radius: 3px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .empty {
+    color: var(--muted); padding: 40px; text-align: center; font-size: 14px;
+  }
+  .empty code { background: #222; padding: 2px 6px; border-radius: 3px; }
+  footer {
+    position: absolute; bottom: 0; right: 0; padding: 4px 10px;
+    color: var(--muted); font-size: 10px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🖼️ Fooocus2025 — Asset Browser <span class="badge" id="badge-status">M2a · outputs only</span></h1>
+  <nav class="tabs">
+    <button class="active" data-tab="outputs">📅 Outputs</button>
+    <button disabled title="Coming in M2b">🎨 LoRAs</button>
+    <button disabled title="Coming in M2b">📦 Models</button>
+    <button disabled title="Coming in M2b">🧩 Embeddings</button>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside id="sidebar">
+    <h3>Days</h3>
+    <div id="days-list"><div class="empty">Loading…</div></div>
+  </aside>
+  <main>
+    <div id="grid"><div class="empty">Pick a day on the left.</div></div>
+  </main>
+</div>
+<footer id="footer"></footer>
+
+<script>
+(() => {
+  'use strict';
+
+  /**
+   * M2a SPA: vanilla JS, no deps. Reads JSON manifests written by
+   * modules/gallery_writer.py. M3 will swap the click-thru behaviour
+   * for a PhotoSwipe lightbox with metadata sidebar + Deep Zoom.
+   */
+
+  const $daysList = document.getElementById('days-list');
+  const $grid = document.getElementById('grid');
+  const $footer = document.getElementById('footer');
+
+  const fmtCount = n => n + (n === 1 ? ' image' : ' images');
+
+  async function fetchJson(path) {
+    try {
+      const r = await fetch(path, { cache: 'no-store' });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function renderEmpty(target, msg) {
+    target.innerHTML = `<div class="empty">${msg}</div>`;
+  }
+
+  async function loadDay(date) {
+    document.querySelectorAll('aside .day').forEach(d => {
+      d.classList.toggle('active', d.dataset.date === date);
+    });
+    const manifest = await fetchJson(`./${date}/manifest.json`);
+    if (!manifest || !manifest.images || manifest.images.length === 0) {
+      renderEmpty($grid, `No manifest for ${date} yet.<br><br>Generate an image while Asset Browser is enabled, or click <code>🔄 Reindex everything now</code> in Fooocus → Advanced → 🖼️ Asset Browser.`);
+      return;
+    }
+    const html = manifest.images.map(img => {
+      const thumb = img.thumb || img.src;
+      return `<a href="./${date}/${img.src}" target="_blank" title="${img.src}">
+        <img loading="lazy" src="./${date}/${thumb}" alt="${img.src}">
+        <div class="label">${img.src}</div>
+      </a>`;
+    }).join('');
+    $grid.innerHTML = `<div class="grid">${html}</div>`;
+    $footer.textContent = `${date} — ${fmtCount(manifest.images.length)}`;
+  }
+
+  function renderDays(days, today) {
+    if (!days || days.length === 0) {
+      renderEmpty($daysList, 'No days indexed yet.<br><br>Generate an image while Asset Browser is enabled, or run Reindex.');
+      renderEmpty($grid, '<b>No days yet.</b><br><br>Once you generate (or reindex) an image with Asset Browser enabled, it will appear here.');
+      return;
+    }
+    const html = days.map(d => {
+      const isToday = d.date === today;
+      return `<div class="day${isToday ? ' today' : ''}" data-date="${d.date}">
+        <span>${d.date}</span><span class="count">${d.count}</span>
+      </div>`;
+    }).join('');
+    $daysList.innerHTML = html;
+    $daysList.querySelectorAll('.day').forEach(el => {
+      el.addEventListener('click', () => loadDay(el.dataset.date));
+    });
+    // Auto-load today (or the first available day).
+    const initial = days.find(d => d.date === today) || days[0];
+    if (initial) loadDay(initial.date);
+  }
+
+  (async () => {
+    const idx = await fetchJson('./_index/days.json');
+    if (!idx) {
+      renderEmpty($daysList, 'No <code>_index/days.json</code>.');
+      renderEmpty($grid, 'Asset Browser has not built its index yet.<br><br>In Fooocus go to <b>Advanced → 🖼️ Asset Browser</b> and click <code>🔄 Reindex everything now</code>, or generate a new image with the toggle enabled.');
+      return;
+    }
+    renderDays(idx.days || [], idx.today);
+    $footer.textContent = `${(idx.days || []).length} day(s) indexed`;
+  })();
+})();
+</script>
+</body>
+</html>
