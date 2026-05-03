@@ -1081,8 +1081,9 @@ with shared.gradio_root:
                         ab_save_btn = gr.Button(value='\U0001F4BE Save settings',
                                                  variant='primary', scale=1)
                         ab_reindex_btn = gr.Button(value='\U0001F504 Reindex everything now',
-                                                    variant='secondary', scale=1)
-                    ab_status = gr.HTML(value='')
+                                                    variant='secondary', scale=1,
+                                                    elem_id='ab-reindex-btn')
+                    ab_status = gr.HTML(value='', elem_id='ab-status')
                     if _ab_cfg.get('enabled'):
                         try:
                             from modules.gallery_writer import ensure_gallery_assets as _ab_ensure
@@ -1144,52 +1145,100 @@ with shared.gradio_root:
                         color = '#4ecdc4' if started else '#ffa500'
                         return gr.update(value=f'<span style="color:{color};">{msg}</span>')
 
-                    def _ab_format_status_html():
-                        # Polled every 2 s — render the worker's snapshot or empty
-                        # if no reindex has ever run in this session.
-                        try:
-                            from modules.gallery_writer import reindex_status
-                            s = reindex_status()
-                        except Exception:
-                            return gr.update()
-                        phase = s.get('phase', 'idle')
-                        if phase == 'idle':
-                            return gr.update()      # don't overwrite idle status
-                        if phase == 'starting':
-                            return gr.update(value='<span style="color:#888;">Reindex starting…</span>')
-                        if phase == 'outputs':
-                            return gr.update(value=(
-                                f'<span style="color:#bb86fc;">'
-                                f'\U0001F504 Outputs: '
-                                f'[{s.get("days_seen", 0)}/{s.get("days_total", 0)}] '
-                                f'· current: <b>{s.get("current_date", "?") or "?"}</b> '
-                                f'· {s.get("images_total", 0)} image(s) processed so far'
-                                f'</span>'))
-                        if phase == 'models':
-                            return gr.update(value=(
-                                f'<span style="color:#bb86fc;">'
-                                f'\U0001F504 Outputs done: {s.get("days_done", 0)}/{s.get("days_total", 0)} day(s), '
-                                f'{s.get("images_total", 0)} image(s). '
-                                f'Now scanning models…</span>'))
-                        if phase == 'done':
-                            return gr.update(value=(
-                                f'<span style="color:#4ecdc4;">✓ {s.get("last_summary", s.get("message", "Done."))}</span>'))
-                        if phase == 'error':
-                            return gr.update(value=(
-                                f'<span style="color:#ff6b6b;">{s.get("last_summary", s.get("message", "Failed."))}</span>'))
-                        return gr.update()
+                    # _ab_format_status_html removed — replaced by client-side
+                    # JS polling against /run/ab_reindex_status (see HTML block
+                    # below). Gradio 3.41's `every=N` on .load() requires
+                    # queue=True to repeat, which would serialise polling
+                    # against generation. Client-side polling avoids both
+                    # issues and never blocks the queue.
 
                     ab_reindex_btn.click(
                         _ab_reindex_now,
                         inputs=[],
                         outputs=[ab_status],
                         queue=False, show_progress=False)
-                    # Poll the worker status every 2 s. When idle the callback
-                    # returns gr.update() (no-op) so the UI is left alone.
-                    shared.gradio_root.load(
-                        _ab_format_status_html,
-                        outputs=[ab_status],
-                        every=2, queue=False, show_progress=False)
+
+                    # Hidden API endpoint that returns the reindex status JSON.
+                    # Polled by the inline JS below — bypasses Gradio's queue
+                    # entirely so it never blocks generations.
+                    def _ab_reindex_status_json():
+                        try:
+                            from modules.gallery_writer import reindex_status
+                            return reindex_status()
+                        except Exception as e:
+                            return {'phase': 'error', 'message': f'status read failed: {e}',
+                                     'last_summary': f'status read failed: {e}', 'running': False}
+                    ab_status_api_btn = gr.Button(visible=False)
+                    ab_status_api_out = gr.JSON(visible=False)
+                    ab_status_api_btn.click(
+                        _ab_reindex_status_json,
+                        inputs=[],
+                        outputs=[ab_status_api_out],
+                        api_name='ab_reindex_status',
+                        queue=False, show_progress=False,
+                    )
+
+                    # Inline JS polling — Gradio 3.41's `every=` on .load()
+                    # only fires repeatedly when queue=True, which would
+                    # serialize against generation. Client-side polling
+                    # avoids both the bug and the queue interference.
+                    gr.HTML(value=r"""
+<script>
+(() => {
+  if (window._abReindexPollSetup) return;
+  window._abReindexPollSetup = true;
+  let pollTimer = null;
+
+  function fmtPhase(s) {
+    if (!s) return '';
+    if (s.phase === 'starting') return '<span style="color:#888;">Reindex starting…</span>';
+    if (s.phase === 'outputs')  return `<span style="color:#bb86fc;">\u{1F504} Outputs: [${s.days_seen||0}/${s.days_total||0}] · current: <b>${s.current_date||'?'}</b> · ${s.images_total||0} image(s) processed so far</span>`;
+    if (s.phase === 'models')   return `<span style="color:#bb86fc;">\u{1F504} Outputs done: ${s.days_done||0}/${s.days_total||0} day(s), ${s.images_total||0} image(s). Now scanning models…</span>`;
+    if (s.phase === 'done')     return `<span style="color:#4ecdc4;">✓ ${s.last_summary||s.message||'Done.'}</span>`;
+    if (s.phase === 'error')    return `<span style="color:#ff6b6b;">${s.last_summary||s.message||'Failed.'}</span>`;
+    return '';
+  }
+
+  async function pollOnce() {
+    try {
+      let resp = null;
+      for (const url of ['/run/ab_reindex_status', '/api/ab_reindex_status']) {
+        try { resp = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:'{"data":[]}'}); }
+        catch (_) { continue; }
+        if (resp && resp.ok) break;
+      }
+      if (!resp || !resp.ok) return;
+      const json = await resp.json();
+      const s = (json && Array.isArray(json.data)) ? json.data[0] : json;
+      const el = document.getElementById('ab-status');
+      if (!el || !s) return;
+      const html = fmtPhase(s);
+      if (html) el.innerHTML = html;
+      // Stop polling when worker is no longer running.
+      if (!s.running && (s.phase === 'done' || s.phase === 'error' || s.phase === 'idle')) {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      }
+    } catch (e) { /* swallow — next tick */ }
+  }
+
+  function startPoll() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollOnce();   // first hit immediate
+    pollTimer = setInterval(pollOnce, 2000);
+  }
+
+  // Attach to the Reindex button — wait for it to land in the DOM.
+  function attach() {
+    const btn = document.getElementById('ab-reindex-btn');
+    if (!btn) { setTimeout(attach, 500); return; }
+    if (btn._abPollAttached) return;
+    btn._abPollAttached = true;
+    btn.addEventListener('click', () => setTimeout(startPoll, 200));
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach);
+  else attach();
+})();
+</script>""", visible=False)
 
                     # === Hidden API bridge for the SPA's "Fetch from CivitAI" button.
                     # Exposed via api_name so the standalone HTML can POST to it
