@@ -198,6 +198,13 @@ Unchecked → original upstream behaviour (preserves input's native aspect). Doe
 - *Generate thumbnails on save* — JPEG centre-crop, ~10 ms/image, makes the grid load instantly even with thousands of images.
 - *Generate deep-zoom tiles for big images* — `auto` (>4 MP by default), `always`, `never`. Currently a no-op in v1 (the Deep Zoom plugin falls back to PhotoSwipe's native pinch/scroll zoom on the full image — fine for everything except gigapixel scans).
 - *Index models on startup* — daemon thread, ~2-5 s for hundreds of LoRAs (uses cache, never makes fresh CivitAI API calls in bulk).
+- *🌫 Blur thumbnails by default (NSFW privacy)* — when ON, all thumbnails are CSS-blurred with hover/click reveal. The Browser header has a per-browser override toggle (sticky in localStorage).
+
+**Browser-side features (no Fooocus involvement):**
+- **Hide / show days + subfolders** — hover over any item in the sidebar (a day in 📅 Outputs, a subfolder in 🎨 LoRAs / 📦 Models / 🧩 Embeddings) → small `🚫 hide` button appears → click to remove from the list. Header shows `👁️ Hidden N` badge with the count; clicking the badge toggles "show hidden" mode where they reappear greyed with `↩ unhide`. Persisted per-browser via localStorage. Useful to hide a Flux experiments subfolder, an NSFW day, or duplicate organisational folders.
+- **🌐 Fetch from CivitAI** button — appears in the lightbox caption when a model has no sidecar preview (placeholder). One click downloads the top-rated CivitAI image for that model and saves it as `<stem>.preview.png` next to the model file (A1111/ComfyUI sidecar convention — visible in those tools too). Manifest is rebuilt automatically; the page reloads to show the new preview. Refuses to overwrite an existing sidecar (data-loss avoidance — user must delete first).
+- **Async reindex with live progress** — clicking 🔄 Reindex everything now spawns a daemon thread; the button returns immediately with `Reindex started in background`, then the status line updates every 2 s with the current phase (`🔄 Outputs: [42/135] · current: 2024-06-08 · 8124 image(s) processed so far`, then `Now scanning models…`, then `✓ Reindex complete: 135 day(s), 24831 image(s). · models: 5234 LoRAs, 153 ckpts, 603 embeds`). No more browser HTTP timeouts on large collections.
+- **Console silenced** — Pillow's DecompressionBombWarning (triggered by Fooocus's own Upscale 2x outputs >89 MP) and the Windows asyncio Win10054 connection-reset noise are both filtered out at startup. Real errors still bubble up.
 
 **Advanced tunables (`config.txt` only — not exposed in the UI to avoid clutter):**
 
@@ -288,6 +295,7 @@ All upstream keys still apply. The fork adds a few of its own. Most have a UI co
 | `asset_browser.thumbnail_quality` | `85` | 40..100 | custom-8 | JPEG quality for thumbnails. 70 ~halves file size. |
 | `asset_browser.dzi_threshold_mp` | `4.0` | 0.5..64.0 | custom-8 | Megapixel threshold for `generate_dzi_tiles="auto"`. |
 | `asset_browser.placeholder_label_max` | `24` | 8..64 | custom-8 | Filename length on placeholder previews before truncation. |
+| `asset_browser.blur_thumbnails` | `false` | bool | custom-8.1 | NSFW privacy default — blur all thumbnails with hover/click reveal. Per-browser override available in the Browser header. |
 
 Each value is clamped on save — bad values in `config.txt` fall back to the default rather than crashing.
 
