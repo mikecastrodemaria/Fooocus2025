@@ -722,23 +722,21 @@ function buildModelsTab(kind, opts) {
         : this.items.filter(it => (it.subfolder || '.') === this.activeSubfolder));
       if (filtered.length === 0) { renderEmpty($main, 'Nothing to show here.'); return; }
 
-      // Slides for lightbox: prefer the full-resolution preview_full (sidecar
-      // copy at native size) and fall back to the 256x256 thumb if missing.
-      // Probe dimensions async so PhotoSwipe centres / zooms correctly.
-      this._slides = await Promise.all(filtered.map(async (it) => {
+      // Slides for lightbox — uses preview_full (full-res sidecar copy) and
+      // dimensions stored in the manifest. Avoids the previous `probeDimensions`
+      // pass that was fetching every preview file just to read width/height
+      // (catastrophic on tabs with thousands of items).
+      this._slides = filtered.map((it) => {
         const fullSrc = it.preview_full || it.preview;
         const url = fullSrc ? `./${fullSrc}` : '';
-        let w = 512, h = 512;
-        if (url) {
-          try { const d = await probeDimensions(url); w = d.w; h = d.h; } catch (_) {}
-        }
         return {
           src: url,
           msrc: it.preview ? `./${it.preview}` : undefined,
-          width: w, height: h,
+          width:  it.preview_width  || 1024,   // 1024 default = our placeholder size
+          height: it.preview_height || 1024,
           _item: it,
         };
-      }));
+      });
       const lb = getLightbox(this.kind, opts.captionRenderer);
       lb.options.dataSource = this._slides;
 

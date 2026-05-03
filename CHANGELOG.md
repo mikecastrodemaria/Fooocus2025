@@ -3,6 +3,17 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-8.5] — 2026-05-03 — Drop eager preview-dimension probing (perf fix)
+### Fixed
+- **Model tabs no longer fetch every full-resolution preview just to read its dimensions.** The previous SPA `renderGrid` did `await Promise.all(filtered.map(it => probeDimensions(it.preview_full)))` to feed PhotoSwipe correct widths/heights. On a tab with thousands of items (5234 LoRAs in the user's case), this triggered thousands of HTTP fetches of preview files (10 KB placeholders to multi-MB sidecars) on every tab open / subfolder change. Could blow up to several GB of unnecessary downloads.
+### Changed
+- **`modules/model_indexer.py`** now probes preview dimensions once at index time via Pillow's lazy header read (`Image.open(...).size`) and stores `preview_width` / `preview_height` in each manifest item. Placeholders skip the probe entirely (always `PLACEHOLDER_FULL_SIZE` square = 1024×1024).
+- **`gallery_template/index.html`**: model tabs read `it.preview_width` / `it.preview_height` directly from the manifest. Default 1024×1024 if missing (manifests built before this change won't have the fields — `Reindex everything now` rebuilds them). The eager `probeDimensions` call is removed; the function itself is kept because the Outputs tab still uses it as a fallback for old PNGs whose manifest lacks dimensions.
+### Notes
+- Grid thumbnails ARE still lazy-loaded via the browser-native `<img loading="lazy">` (unchanged).
+- Lightbox slides are loaded on-demand by PhotoSwipe (unchanged).
+- The fix only removes the EAGER probe per item at tab-open time.
+
 ## [custom-8.4] — 2026-05-03 — Fetch CivitAI preview from the lightbox
 ### Added
 - **🌐 Fetch from CivitAI** button inside the PhotoSwipe lightbox caption sidebar. Visible only on models whose preview is a placeholder (no sidecar yet). One click → downloads the top-rated CivitAI image for that model and saves it as `<stem>.preview.png` next to the model file (A1111 / ComfyUI sidecar convention — visible in those tools too). After save, the model's manifest is rebuilt so the SPA reloads with the real preview.

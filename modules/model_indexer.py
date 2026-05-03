@@ -224,16 +224,32 @@ def _copy_full_preview(source_path: str, dest_path: str) -> bool:
         return False
 
 
+def _probe_image_size(path: str) -> tuple:
+    """Cheap (header-only) image dimension probe via Pillow. Returns (w, h) or
+    (None, None) on failure. Used so the SPA doesn't have to fetch every
+    full-res preview just to read its dimensions before opening the lightbox.
+    """
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            return int(im.size[0]), int(im.size[1])
+    except Exception:
+        return None, None
+
+
 def _resolve_preview(model_rel_filename: str, model_full_path: str, kind: str) -> tuple:
     """Resolve sidecar preview OR placeholder, cache the thumbnail (always) AND
     the full-resolution copy (when sidecar exists), return
-    (thumb_rel_path, full_rel_path, preview_kind).
+    (thumb_rel_path, full_rel_path, full_w, full_h, preview_kind).
 
     All paths are relative to outputs/, so the SPA can use them directly.
-    preview_kind is 'sidecar' | 'placeholder'.
+    preview_kind is 'sidecar' | 'placeholder' | 'missing'.
+
+    full_w/full_h are the dimensions of the FULL preview (preview_full) so the
+    SPA can lay the lightbox out without an upfront fetch+probe per item.
 
     For sidecars: full = copy of the original sidecar at native resolution.
-    For placeholders: full = the 256x256 placeholder PNG itself.
+    For placeholders: full = the PLACEHOLDER_FULL_SIZE square PNG.
     """
     cache_id = _hash_id(model_rel_filename)
     thumb_dir = _previews_dir(kind)
@@ -242,24 +258,25 @@ def _resolve_preview(model_rel_filename: str, model_full_path: str, kind: str) -
 
     sidecar = _find_sidecar_preview(model_full_path)
     if sidecar and _make_preview_thumb(sidecar, thumb_path):
-        # Cache the full sidecar with its original extension (PNG/JPG/etc).
         ext = os.path.splitext(sidecar)[1].lower() or '.png'
         full_path = os.path.join(thumb_dir, f'{cache_id}_full{ext}')
         if _copy_full_preview(sidecar, full_path):
             rel_full = os.path.relpath(full_path, _outputs_root()).replace(os.sep, '/')
         else:
-            rel_full = rel_thumb   # fallback to thumb if copy failed
-        return rel_thumb, rel_full, 'sidecar'
+            rel_full = rel_thumb
+            full_path = os.path.join(_outputs_root(), rel_thumb)
+        fw, fh = _probe_image_size(full_path)
+        return rel_thumb, rel_full, fw, fh, 'sidecar'
 
-    # Placeholder route — same image for thumb + full (placeholder is already 256x256).
     placeholder_dir = os.path.join(_outputs_root(), PREVIEWS_DIR_NAME, PLACEHOLDER_DIR_NAME)
     placeholder_png = os.path.join(placeholder_dir, f'{cache_id}.png')
     if _make_placeholder_png(model_rel_filename, placeholder_png):
         if _make_preview_thumb(placeholder_png, thumb_path):
             rel_full = os.path.relpath(placeholder_png, _outputs_root()).replace(os.sep, '/')
-            return rel_thumb, rel_full, 'placeholder'
-    # Last resort: empty preview.
-    return '', '', 'missing'
+            # Placeholders are always rendered at PLACEHOLDER_FULL_SIZE squares,
+            # so no need to pay for a probe.
+            return rel_thumb, rel_full, PLACEHOLDER_FULL_SIZE, PLACEHOLDER_FULL_SIZE, 'placeholder'
+    return '', '', None, None, 'missing'
 
 
 # --------------------------------------------------------------------------
@@ -351,7 +368,7 @@ def _checkpoint_consensus_from_cache(filename: str) -> dict:
 
 
 def _build_lora_item(rel_filename: str, full_path: str) -> dict:
-    preview, preview_full, preview_kind = _resolve_preview(rel_filename, full_path, 'loras')
+    preview, preview_full, fw, fh, preview_kind = _resolve_preview(rel_filename, full_path, 'loras')
     item = {
         'id': _hash_id(rel_filename, 16),
         'filename': os.path.basename(rel_filename),
@@ -359,6 +376,8 @@ def _build_lora_item(rel_filename: str, full_path: str) -> dict:
         'subfolder': os.path.dirname(rel_filename).replace(os.sep, '/') or '.',
         'preview': preview,
         'preview_full': preview_full,
+        'preview_width': fw,
+        'preview_height': fh,
         'preview_kind': preview_kind,
         'trigger_words': _read_cached_triggers(rel_filename, 'lora'),
         'civitai_url': _civitai_url_from_cache(rel_filename, 'lora'),
@@ -368,7 +387,7 @@ def _build_lora_item(rel_filename: str, full_path: str) -> dict:
 
 
 def _build_checkpoint_item(rel_filename: str, full_path: str) -> dict:
-    preview, preview_full, preview_kind = _resolve_preview(rel_filename, full_path, 'checkpoints')
+    preview, preview_full, fw, fh, preview_kind = _resolve_preview(rel_filename, full_path, 'checkpoints')
     consensus = _checkpoint_consensus_from_cache(rel_filename)
     item = {
         'id': _hash_id(rel_filename, 16),
@@ -377,6 +396,8 @@ def _build_checkpoint_item(rel_filename: str, full_path: str) -> dict:
         'subfolder': os.path.dirname(rel_filename).replace(os.sep, '/') or '.',
         'preview': preview,
         'preview_full': preview_full,
+        'preview_width': fw,
+        'preview_height': fh,
         'preview_kind': preview_kind,
         'base_model': consensus.pop('base_model', None),
         'civitai_consensus': consensus or None,
@@ -387,7 +408,7 @@ def _build_checkpoint_item(rel_filename: str, full_path: str) -> dict:
 
 
 def _build_embedding_item(rel_filename: str, full_path: str) -> dict:
-    preview, preview_full, preview_kind = _resolve_preview(rel_filename, full_path, 'embeddings')
+    preview, preview_full, fw, fh, preview_kind = _resolve_preview(rel_filename, full_path, 'embeddings')
     base = os.path.splitext(os.path.basename(rel_filename))[0].lower()
     is_negative_hint = any(base.startswith(p) for p in NEGATIVE_PREFIXES)
     item = {
@@ -397,6 +418,8 @@ def _build_embedding_item(rel_filename: str, full_path: str) -> dict:
         'subfolder': os.path.dirname(rel_filename).replace(os.sep, '/') or '.',
         'preview': preview,
         'preview_full': preview_full,
+        'preview_width': fw,
+        'preview_height': fh,
         'preview_kind': preview_kind,
         'trigger': os.path.splitext(os.path.basename(rel_filename))[0],
         'is_negative_hint': is_negative_hint,
