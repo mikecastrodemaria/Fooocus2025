@@ -3,6 +3,46 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-8] — 2026-05-03 — Asset Browser (autonomous module)
+### Added
+- **🖼️ Asset Browser** — a standalone HTML/JSON gallery served from `outputs/index.html`, opened in a new browser tab from the **🖼️ Asset Browser** link next to **📚 History Log**. Built on **PhotoSwipe v5** + **Dynamic Caption plugin** + **Deep Zoom plugin** (all MIT, ESM modules bundled in `outputs/_assets/`, no CDN). Vanilla JS SPA — no React/Vue, ~50 KB gzip total payload.
+- **4 tabs**, all with PhotoSwipe lightbox + per-type metadata sidebar (Dynamic Caption):
+  - **📅 Outputs** — timeline sidebar (days, anti-chrono, "today" highlighted) + grid of thumbnails + lightbox with prompt / negative / sampler / cfg / steps / seed / resolution / model + 📋 Copy buttons (Prompt / Negative / All params JSON).
+  - **🎨 LoRAs** — sidebar = subfolder facets, lightbox with triggers + size + 📋 Copy triggers / Copy filename + 🔗 Open on CivitAI link.
+  - **📦 Models (Checkpoints)** — same UX + base_model + CivitAI consensus settings (sampler / cfg / steps / clip_skip / top_resolution) read from the existing `civitai_cache/` (no fresh API calls).
+  - **🧩 Embeddings** — sidebar = subfolder facets, lightbox with trigger + negative-hint flag + 📋 Copy `(embedding:name:1.0)` token / Copy trigger only.
+- **Toggle infrastructure (OFF by default — non-negotiable):** the feature is disabled by default. When `asset_browser.enabled = false` in `config.txt`, the per-image hook in `private_logger.py` returns in <1µs (single dict access) and the model indexer thread is never spawned. Indistinguable from not having the feature installed. UI accordion in **Advanced** with master enable + sub-toggles (`generate_thumbnails`, `generate_dzi_tiles` auto/always/never, `index_models_on_boot`) + 💾 Save Settings (writes config.txt) + 🔄 Reindex Now button.
+- **New module `modules/gallery_writer.py`:**
+  - `on_image_logged()` — silent hook called from `private_logger.log()`. Generates 256×256 JPEG centre-cropped thumbnail, appends entry to `outputs/<DATE>/manifest.json` (idempotent on retries), refreshes `outputs/_index/days.json`. Process-locked.
+  - `reindex_outputs()` — walks every existing date subdir and rebuilds manifests + thumbs + bundled model scan. Wired to the Reindex Now button.
+  - `ensure_gallery_assets()` — copies `gallery_template/index.html` + `_assets/*` to `outputs/`. Idempotent, runs on every image log so template upgrades land for free.
+- **New module `modules/model_indexer.py`:**
+  - `scan_loras()` / `scan_checkpoints()` / `scan_embeddings()` — walk the lists already populated by `config.update_files()`.
+  - **Sidecar preview lookup in 5 patterns** (A1111/ComfyUI compatible): `<stem>.preview.png` → `.preview.jpg` → `.png` → `.jpg` → `_preview.png` → **placeholder** (hash-derived gradient PNG with filename overlay, cached by sha1 of rel_path).
+  - **256×256 JPEG preview thumbnails** in `outputs/_previews/<kind>/<hash>.jpg`, invalidated by source mtime so model swaps are picked up.
+  - **Cache-only CivitAI reads** via `load_cached_triggers` / `load_cached_settings` — never makes fresh API calls (would rate-limit on bulk scans). Triggers come from local safetensors metadata (existing `lora_metadata` module) merged with cached CivitAI trainedWords. Checkpoints get `base_model` + consensus settings from the cache.
+  - `maybe_start_boot_scan()` — daemon thread spawned at startup only when toggle + `index_models_on_boot` are both true.
+- **New `gallery_template/`** packaged in the repo:
+  - `index.html` — the SPA (~25 KB).
+  - `_assets/photoswipe.{esm.js,css}` (5.4.4)
+  - `_assets/photoswipe-lightbox.esm.js`
+  - `_assets/photoswipe-dynamic-caption-plugin.{esm.js,css}` (1.2.7)
+  - `_assets/photoswipe-deep-zoom-plugin.esm.js` (1.1.2)
+- **Cross-app communication = clipboard only.** All Copy buttons in the lightbox put data on the clipboard; user pastes into Fooocus by hand. No Gradio endpoint added — keeps the SPA fully autonomous (consultable via `file://` even when Fooocus is not running). Future v2 can add an iframe/postMessage bridge for direct picker integration with the LoRA/Checkpoint dropdowns.
+- **URL hash navigation** — `#outputs` / `#loras` / `#checkpoints` / `#embeddings` for bookmarkable / shareable tab state.
+### Changed
+- `modules/private_logger.py` — +9 lines: silent try/except hook into `gallery_writer.on_image_logged()` after the final `print()`. Wrapped so any bug in the gallery writer can never break image generation.
+- `launch.py` — +8 lines: `model_indexer.maybe_start_boot_scan()` before `from webui import *`, also wrapped in try/except.
+- `webui.py` — new accordion in Advanced (right after the Documentation link); second link button next to History Log in the prompt area (greyed out when disabled).
+- `modules/config.py` — new `asset_browser` config block (dict) + `asset_browser_enabled()` / `asset_browser_setting()` / `write_asset_browser_settings()` helpers.
+### Deferred to follow-up
+- **DZI tile generation** for very large images — toggle exists (`generate_dzi_tiles`) and Deep Zoom plugin is wired, but the Python-side tile generation is not in this commit. Without DZI tiles, the Deep Zoom plugin falls back to PhotoSwipe's normal pinch/scroll zoom on the full image — fine for outputs (typically <2 MP) and model preview thumbs.
+- **Full-resolution model previews** in the lightbox — currently shows the 256×256 thumb. Sidecars > 256×256 will get pass-through in a follow-up.
+
+## [version bump] — 2026-05-03
+### Changed
+- **Version bumped to `2026.2.0`** (`fooocus_version.py`) for the custom-8 feature ship.
+
 ## [version bump] — 2026-05-02
 ### Changed
 - **Version bumped from `2.5.5` to `2026.1.0`** (`fooocus_version.py`). The fork has diverged enough from upstream v2.5.5 that the inherited version string was confusing users into thinking the fork was unmaintained. Switched to CalVer (`YYYY.MINOR.PATCH`). PNG metadata `Version` field and the WebUI title both now read `Fooocus v2026.1.0`.

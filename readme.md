@@ -4,7 +4,7 @@
 
 # Fooocus 2025 — Custom Fork
 
-> Version **`2026.1.0`** · A personal fork of **[lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5** with a series of quality-of-life features: a **Save Preset** button, **CivitAI Model Settings** integration (checkpoint triggers, consensus settings, save-as-preset), **LoRA trigger words** from local metadata + CivitAI, **Embeddings panel** with bulk-insert, **Wildcards editor**, **Vary-with-aspect-ratio** override, **Custom Resolution** (any ratio + size, snapped to /64), and a real **Restart UI** button.
+> Version **`2026.2.0`** · A personal fork of **[lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5** with a series of quality-of-life features: a **Save Preset** button, **CivitAI Model Settings** integration (checkpoint triggers, consensus settings, save-as-preset), **LoRA trigger words** from local metadata + CivitAI, **Embeddings panel** with bulk-insert, **Wildcards editor**, **Vary-with-aspect-ratio** override, **Custom Resolution** (any ratio + size, snapped to /64), an **🖼️ Asset Browser** (PhotoSwipe-based standalone gallery for outputs + LoRAs/Checkpoints/Embeddings previews — opt-in, zero impact when disabled), and a real **Restart UI** button.
 
 ![Fooocus2025 fork — Models tab showing CivitAI / LoRA / Embeddings / Wildcards accordions and Restart UI, with wildcards in the prompt](docs/screenshots/overview.png)
 
@@ -168,7 +168,37 @@ Unchecked → original upstream behaviour (preserves input's native aspect). Doe
 
 ---
 
-### 8. 🔄 Restart UI button
+### 8. 🖼️ Asset Browser (autonomous gallery)
+**Where:** Advanced tab → **🖼️ Asset Browser** accordion (master toggle is **OFF by default**). Once enabled, a **🖼️ Asset Browser** link appears next to **📚 History Log** in the prompt area; clicking it opens the gallery in a new browser tab.
+
+**What it does:** A standalone HTML/JSON gallery served from `outputs/index.html` — built on **PhotoSwipe v5** + **Dynamic Caption plugin** + **Deep Zoom plugin** (all MIT, vanilla JS, no React/Vue, ~50 KB gzip total). Browses **outputs** and **model previews** (LoRAs / Checkpoints / Embeddings) in the same UI, with click-to-zoom lightbox + per-type metadata sidebar + clipboard copy buttons.
+
+**Why it exists separately:** Designed as an **autonomous module** — Fooocus only knows it exists via 2 link buttons in the UI. The SPA is plain `outputs/index.html` reading JSON manifests, so it works even if Fooocus is not running. **Master toggle in `config.txt` (OFF by default)** keeps zero overhead on Fooocus when disabled (<1µs hook check). User-facing accordion in Advanced lets you enable + tune sub-features.
+
+**4 tabs:**
+- **📅 Outputs** — left timeline (one entry per generation day, "today" highlighted), grid of thumbnails for the selected day. Click → PhotoSwipe lightbox with metadata sidebar (prompt, negative, sampler, CFG, steps, seed, resolution, model, LoRAs…) + 📋 Copy Prompt / Copy Negative / Copy All Params (JSON) buttons.
+- **🎨 LoRAs** — left subfolder facets, grid of preview images (auto-discovered sidecar `<model>.preview.png` etc., or hash-derived placeholder gradient if missing). Lightbox shows triggers + size + 📋 Copy triggers / 🔗 Open on CivitAI link.
+- **📦 Models (Checkpoints)** — same UX + base model + CivitAI consensus settings (sampler / CFG / steps / clip skip) read from the cache populated by the existing **🎨 CivitAI Model Settings** panel. Lightbox has 📋 Copy consensus (JSON) for re-pasting elsewhere.
+- **🧩 Embeddings** — same UX + auto-detected `(embedding:name:1.0)` token + negative-prompt heuristic flag. Lightbox has 📋 Copy embedding token / Copy trigger only.
+
+**How to enable:**
+1. **Advanced → 🖼️ Asset Browser** → tick **Enable Asset Browser** → click **💾 Save settings**.
+2. Restart Fooocus (Restart UI button works fine).
+3. Click **🔄 Reindex everything now** to backfill thumbnails + manifests for your existing outputs and your installed models. Console shows progress.
+4. Click the new **🖼️ Asset Browser** link in the prompt area → opens in a new tab.
+
+**Sub-toggles** (all default ON when master is enabled):
+- *Generate thumbnails on save* — 256×256 JPEG centre-crop, ~10 ms/image, makes the grid load instantly even with thousands of images.
+- *Generate deep-zoom tiles for big images* — `auto` (>4 MP), `always`, `never`. Currently a no-op in v1 (the Deep Zoom plugin falls back to PhotoSwipe's native pinch/scroll zoom on the full image — fine for everything except gigapixel scans).
+- *Index models on startup* — daemon thread, ~2-5 s for hundreds of LoRAs (uses cache, never makes fresh CivitAI API calls in bulk).
+
+**Browser navigation** — URL hash for tab state: `outputs/index.html#loras` / `#checkpoints` / `#embeddings` are all bookmarkable.
+
+**Future v2 (not in this release):** open the SPA as an **iframe modal inside Fooocus** when the user clicks a LoRA/Checkpoint dropdown — picks a model visually instead of by filename. Already feasible without changes to the SPA itself (just a JS bridge in Fooocus).
+
+---
+
+### 9. 🔄 Restart UI button
 **Where:** bottom of the Advanced tab, next to **Refresh All Files**.
 
 **What it does:** Exits the Python process with code `42`. The included `.bat` launchers detect that exit code and relaunch automatically — a real restart (re-reads `config.txt`, re-imports modules, re-loads the model). Takes ~30 s on an RTX 5090; refresh the browser tab once the Gradio server is back.
@@ -215,13 +245,18 @@ The install root of the original package can include launcher scripts tuned for 
 ## 📁 Files touched by this fork
 | File | Purpose |
 |---|---|
-| `fooocus_version.py` | Version bumped to `2026.1.0` (CalVer) |
+| `fooocus_version.py` | Version bumped to `2026.2.0` (CalVer) |
 | `modules/civitai_api.py` | **New** — CivitAI client, caching, consensus aggregation, model+embedding triggers |
 | `modules/lora_metadata.py` | **New** — local safetensors metadata reader for LoRA/embedding triggers |
 | `modules/util.py` | Adds `compute_custom_wh()` — ratio + size → snapped W×H (custom-7) |
-| `modules/config.py` | Save Preset / preset round-trip (LoRAs, embeddings, custom resolution) + API key persistence |
+| `modules/config.py` | Save Preset / preset round-trip (LoRAs, embeddings, custom resolution) + API key persistence + `asset_browser` config block (custom-8) |
 | `modules/async_worker.py` | Reads `use_aspect_for_vary` (custom-6) and `custom_resolution` (custom-7) flags |
-| `webui.py` | All fork UI: Save Preset, CivitAI / LoRA / Embeddings / Wildcards accordions, Aspect-for-Vary, Custom Resolution panel, Restart UI |
+| `modules/private_logger.py` | Silent hook into `gallery_writer.on_image_logged()` (custom-8) |
+| `modules/gallery_writer.py` | **New** — Asset Browser per-image hook, thumbnails, manifests, days.json (custom-8) |
+| `modules/model_indexer.py` | **New** — Asset Browser model scanners (LoRAs / Checkpoints / Embeddings) + sidecar preview lookup + placeholder generation (custom-8) |
+| `gallery_template/index.html` + `_assets/` | **New** — Asset Browser SPA + bundled PhotoSwipe v5 / Dynamic Caption / Deep Zoom (custom-8) |
+| `launch.py` | Spawns Asset Browser model indexer in a daemon thread when enabled (custom-8) |
+| `webui.py` | All fork UI: Save Preset, CivitAI / LoRA / Embeddings / Wildcards accordions, Aspect-for-Vary, Custom Resolution panel, Asset Browser accordion + link button, Restart UI |
 | `CHANGELOG.md` | Per-release fork history |
 | `.gitignore` | Excludes `civitai_cache/`, local presets, assistant artifacts |
 

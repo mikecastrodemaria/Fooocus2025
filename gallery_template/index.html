@@ -4,8 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Fooocus2025 — Asset Browser</title>
+<link rel="stylesheet" href="_assets/photoswipe.css" />
+<link rel="stylesheet" href="_assets/photoswipe-dynamic-caption-plugin.css" />
 <style>
-  /* ---- M2b: 4 tabs, vanilla styles. M3 swaps the click-thru for PhotoSwipe. ---- */
+  /* M3 final: 4 tabs + PhotoSwipe lightbox + Dynamic Caption sidebar + Deep Zoom. */
   :root {
     --bg: #121212;
     --panel: #1c1c1c;
@@ -39,10 +41,7 @@
   }
   nav.tabs button:hover { background: #2a2a2a; }
   nav.tabs button.active { background: var(--accent); color: #000; border-color: var(--accent); }
-  nav.tabs button[disabled] { opacity: 0.4; cursor: not-allowed; }
-  .layout {
-    display: grid; grid-template-columns: 240px 1fr; height: calc(100vh - 53px);
-  }
+  .layout { display: grid; grid-template-columns: 240px 1fr; height: calc(100vh - 53px); }
   aside {
     background: var(--panel); border-right: 1px solid var(--border);
     overflow-y: auto; padding: 8px;
@@ -69,6 +68,7 @@
   main .card {
     display: block; aspect-ratio: 1 / 1; background: #000; border-radius: 6px;
     overflow: hidden; text-decoration: none; position: relative; color: inherit;
+    cursor: zoom-in;
   }
   main .card img {
     width: 100%; height: 100%; object-fit: cover; display: block;
@@ -91,19 +91,56 @@
   }
   main .card.placeholder { outline: 1px dashed var(--border); }
   main .card.negative .badges span { color: #ff8a8a; }
-  .empty {
-    color: var(--muted); padding: 40px; text-align: center; font-size: 14px;
-  }
+  .empty { color: var(--muted); padding: 40px; text-align: center; font-size: 14px; }
   .empty code { background: #222; padding: 2px 6px; border-radius: 3px; }
   footer {
     position: absolute; bottom: 0; right: 0; padding: 4px 10px;
     color: var(--muted); font-size: 10px;
   }
+
+  /* PhotoSwipe Dynamic Caption — our metadata sidebar styles. */
+  .pswp__dynamic-caption {
+    color: var(--text); background: rgba(28,28,28,0.92); border-radius: 6px;
+    font-size: 13px; line-height: 1.45; padding: 14px 16px; max-width: 360px;
+    border: 1px solid var(--border);
+  }
+  .pswp__dynamic-caption.pswp__dynamic-caption--aside { width: 320px; }
+  .pswp__dynamic-caption h2 {
+    margin: 0 0 6px; font-size: 14px; color: var(--accent); word-break: break-all;
+  }
+  .pswp__dynamic-caption .meta-row {
+    display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px;
+    margin: 4px 0; font-size: 12px;
+  }
+  .pswp__dynamic-caption .meta-row .k { color: var(--muted); }
+  .pswp__dynamic-caption .meta-row .v {
+    color: var(--text); word-break: break-word; max-height: 5em; overflow: auto;
+  }
+  .pswp__dynamic-caption .copy-row {
+    display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px;
+    border-top: 1px solid var(--border); padding-top: 10px;
+  }
+  .pswp__dynamic-caption .copy-row button,
+  .pswp__dynamic-caption .copy-row a {
+    background: #222; color: var(--text); border: 1px solid var(--border);
+    padding: 5px 10px; border-radius: 5px; font-size: 11px; cursor: pointer;
+    text-decoration: none; display: inline-block;
+  }
+  .pswp__dynamic-caption .copy-row button:hover,
+  .pswp__dynamic-caption .copy-row a:hover { background: #333; color: #fff; }
+  .pswp__dynamic-caption .copy-row button.ok {
+    background: var(--accent-2); color: #000; border-color: var(--accent-2);
+  }
+  .pswp__dynamic-caption .triggers, .pswp__dynamic-caption code {
+    background: #111; padding: 6px 8px; border-radius: 4px; display: block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px; color: #c8b6e8; word-break: break-all;
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1>🖼️ Fooocus2025 — Asset Browser <span class="badge" id="badge-status">M2b · outputs + models</span></h1>
+  <h1>🖼️ Fooocus2025 — Asset Browser <span class="badge" id="badge-status">M3 · PhotoSwipe lightbox</span></h1>
   <nav class="tabs" id="tabs">
     <button class="active" data-tab="outputs">📅 Outputs</button>
     <button data-tab="loras">🎨 LoRAs</button>
@@ -123,232 +160,394 @@
 </div>
 <footer id="footer"></footer>
 
-<script>
-(() => {
-  'use strict';
+<script type="module">
+import PhotoSwipeLightbox from './_assets/photoswipe-lightbox.esm.js';
+import PhotoSwipe from './_assets/photoswipe.esm.js';
+import PhotoSwipeDynamicCaption from './_assets/photoswipe-dynamic-caption-plugin.esm.js';
+import DeepZoom from './_assets/photoswipe-deep-zoom-plugin.esm.js';
 
-  /**
-   * M2b SPA: vanilla JS, no deps. 4 tabs (Outputs + LoRAs + Models + Embeddings).
-   * Reads JSON manifests written by modules/gallery_writer.py and
-   * modules/model_indexer.py. M3 will swap click-thru behaviour for a
-   * PhotoSwipe lightbox with metadata sidebar + Deep Zoom.
-   */
+/**
+ * M3 SPA: 4 tabs (Outputs + LoRAs + Models + Embeddings).
+ * Each tab opens a PhotoSwipe v5 lightbox on click. Dynamic Caption
+ * renders a metadata sidebar (per-tab template). Deep Zoom is wired but
+ * only kicks in when an item provides `dzi.tileUrl` (M3 ships without
+ * DZI tile generation — Deep Zoom falls back to PhotoSwipe's regular
+ * scroll/pinch zoom on the full image, which is fine for outputs and
+ * model preview thumbnails).
+ */
 
-  const $tabs = document.getElementById('tabs');
-  const $sidebarTitle = document.getElementById('sidebar-title');
-  const $sidebarList = document.getElementById('sidebar-list');
-  const $main = document.getElementById('main-area');
-  const $footer = document.getElementById('footer');
+const $tabs = document.getElementById('tabs');
+const $sidebarTitle = document.getElementById('sidebar-title');
+const $sidebarList = document.getElementById('sidebar-list');
+const $main = document.getElementById('main-area');
+const $footer = document.getElementById('footer');
 
-  const fmtCount = (n, singular, plural) =>
-    `${n} ${n === 1 ? singular : (plural || singular + 's')}`;
-  const fmtBytes = b => {
-    if (b == null) return '';
-    const u = ['B', 'KB', 'MB', 'GB']; let i = 0; let v = b;
-    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
-    return v.toFixed(v < 10 ? 1 : 0) + ' ' + u[i];
+const fmtCount = (n, singular, plural) =>
+  `${n} ${n === 1 ? singular : (plural || singular + 's')}`;
+const fmtBytes = b => {
+  if (b == null) return '';
+  const u = ['B', 'KB', 'MB', 'GB']; let i = 0; let v = b;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v < 10 ? 1 : 0) + ' ' + u[i];
+};
+const escapeHtml = s => String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtMP = (w, h) => (w && h) ? ((w * h) / 1_000_000).toFixed(2) + ' MP' : '';
+
+async function fetchJson(path) {
+  try {
+    const r = await fetch(path, { cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
+}
+
+function renderEmpty(target, msg) { target.innerHTML = `<div class="empty">${msg}</div>`; }
+
+// --------- Clipboard helper for the caption Copy buttons ----------
+function copyToClipboard(text, btn) {
+  const done = () => {
+    if (!btn) return;
+    const old = btn.textContent;
+    btn.textContent = '✓ copied';
+    btn.classList.add('ok');
+    setTimeout(() => { btn.textContent = old; btn.classList.remove('ok'); }, 1500);
   };
-  const escapeHtml = s => String(s).replace(/[&<>"']/g, c =>
-    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
-  async function fetchJson(path) {
-    try {
-      const r = await fetch(path, { cache: 'no-store' });
-      if (!r.ok) return null;
-      return await r.json();
-    } catch (e) { return null; }
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallback());
+  } else { fallback(); }
+  function fallback() {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch (_) {}
+    document.body.removeChild(ta);
   }
-
-  function renderEmpty(target, msg) { target.innerHTML = `<div class="empty">${msg}</div>`; }
-
-  // ---------------------- OUTPUTS TAB ----------------------
-
-  const Outputs = {
-    days: [],
-    today: null,
-    activeDate: null,
-
-    async init() {
-      $sidebarTitle.textContent = 'Days';
-      const idx = await fetchJson('./_index/days.json');
-      if (!idx) {
-        renderEmpty($sidebarList, 'No <code>_index/days.json</code>.');
-        renderEmpty($main, 'Asset Browser has not built its outputs index yet.<br><br>'
-          + 'In Fooocus go to <b>Advanced → 🖼️ Asset Browser</b> and click '
-          + '<code>🔄 Reindex everything now</code>, or generate a new image.');
-        return;
-      }
-      this.days = idx.days || [];
-      this.today = idx.today;
-      this.renderSidebar();
-      const initial = this.days.find(d => d.date === this.today) || this.days[0];
-      if (initial) this.loadDay(initial.date);
-      else renderEmpty($main, '<b>No days yet.</b>');
-    },
-
-    renderSidebar() {
-      if (this.days.length === 0) { renderEmpty($sidebarList, 'No days indexed.'); return; }
-      $sidebarList.innerHTML = this.days.map(d => `
-        <div class="item${d.date === this.today ? ' today' : ''}${d.date === this.activeDate ? ' active' : ''}" data-date="${escapeHtml(d.date)}">
-          <span>${escapeHtml(d.date)}</span><span class="count">${d.count}</span>
-        </div>`).join('');
-      $sidebarList.querySelectorAll('.item').forEach(el =>
-        el.addEventListener('click', () => this.loadDay(el.dataset.date)));
-    },
-
-    async loadDay(date) {
-      this.activeDate = date;
-      this.renderSidebar();
-      const manifest = await fetchJson(`./${date}/manifest.json`);
-      if (!manifest || !manifest.images || manifest.images.length === 0) {
-        renderEmpty($main, `No manifest for ${date} yet.`);
-        return;
-      }
-      $main.innerHTML = `<div class="grid">${manifest.images.map(img => {
-        const thumb = img.thumb || img.src;
-        return `<a class="card" href="./${date}/${encodeURIComponent(img.src)}" target="_blank" title="${escapeHtml(img.src)}">
-          <img loading="lazy" src="./${date}/${encodeURIComponent(thumb)}" alt="">
-          <div class="label">${escapeHtml(img.src)}</div>
-        </a>`;
-      }).join('')}</div>`;
-      $footer.textContent = `${date} — ${fmtCount(manifest.images.length, 'image')}`;
-    },
-  };
-
-  // ---------------------- MODELS TABS (loras / checkpoints / embeddings) ----------------------
-
-  function buildModelsTab(kind, opts) {
-    return {
-      kind,
-      file: `./_index/${kind}.json`,
-      items: [],
-      subfolders: [],
-      activeSubfolder: '__all__',
-
-      async init() {
-        $sidebarTitle.textContent = opts.sidebarTitle;
-        const idx = await fetchJson(this.file);
-        if (!idx || !idx.items || idx.items.length === 0) {
-          renderEmpty($sidebarList, `No <code>${kind}.json</code> yet.`);
-          renderEmpty($main, `<b>${opts.emptyTitle}</b><br><br>`
-            + 'Click <code>🔄 Reindex everything now</code> in Fooocus → '
-            + 'Advanced → 🖼️ Asset Browser to scan your <code>'
-            + opts.modelsDir + '</code> folder.');
-          return;
-        }
-        this.items = idx.items;
-        this.subfolders = this.computeSubfolders();
-        this.renderSidebar();
-        this.renderGrid();
-        $footer.textContent = `${fmtCount(this.items.length, opts.unit)} indexed at ${idx.generated_at || '?'}`;
-      },
-
-      computeSubfolders() {
-        const counts = new Map();
-        for (const it of this.items) {
-          const f = it.subfolder || '.';
-          counts.set(f, (counts.get(f) || 0) + 1);
-        }
-        return Array.from(counts.entries())
-          .map(([name, count]) => ({ name, count }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-      },
-
-      renderSidebar() {
-        const total = this.items.length;
-        const head = `<div class="item${this.activeSubfolder === '__all__' ? ' active' : ''}" data-sub="__all__">
-            <span>All</span><span class="count">${total}</span></div>`;
-        const rest = this.subfolders.map(sf => {
-          const label = sf.name === '.' ? '(root)' : sf.name;
-          return `<div class="item${this.activeSubfolder === sf.name ? ' active' : ''}" data-sub="${escapeHtml(sf.name)}">
-            <span>${escapeHtml(label)}</span><span class="count">${sf.count}</span></div>`;
-        }).join('');
-        $sidebarList.innerHTML = head + rest;
-        $sidebarList.querySelectorAll('.item').forEach(el => {
-          el.addEventListener('click', () => {
-            this.activeSubfolder = el.dataset.sub;
-            this.renderSidebar();
-            this.renderGrid();
-          });
-        });
-      },
-
-      renderGrid() {
-        const filtered = this.activeSubfolder === '__all__'
-          ? this.items
-          : this.items.filter(it => (it.subfolder || '.') === this.activeSubfolder);
-        if (filtered.length === 0) { renderEmpty($main, 'Nothing in this subfolder.'); return; }
-        $main.innerHTML = `<div class="grid">${filtered.map(it => this.renderCard(it)).join('')}</div>`;
-      },
-
-      renderCard(it) {
-        const previewSrc = it.preview ? `./${it.preview}` : '';
-        const cardClasses = ['card'];
-        if (it.preview_kind === 'placeholder') cardClasses.push('placeholder');
-        if (it.is_negative_hint) cardClasses.push('negative');
-
-        const badges = [];
-        if (it.trigger_words && it.trigger_words.length) {
-          badges.push(`<span title="${escapeHtml(it.trigger_words.join(', '))}">⚡ ${it.trigger_words.length}</span>`);
-        }
-        if (it.civitai_url) badges.push(`<span title="On CivitAI">🔗</span>`);
-        if (it.is_negative_hint) badges.push(`<span title="Likely a negative-prompt embedding">−</span>`);
-        if (it.civitai_consensus) badges.push(`<span title="Has CivitAI consensus settings">📊</span>`);
-
-        const label = it.filename;
-        const sizeStr = it.size_bytes != null ? ` · ${fmtBytes(it.size_bytes)}` : '';
-        const titleAttr = `${it.rel_path}${sizeStr}`
-          + (it.trigger_words && it.trigger_words.length ? `\nTriggers: ${it.trigger_words.join(', ')}` : '')
-          + (it.civitai_url ? `\nCivitAI: ${it.civitai_url}` : '');
-
-        const href = it.civitai_url || (it.preview ? `./${it.preview}` : '#');
-        const target = it.civitai_url ? '_blank' : '_blank';
-
-        return `<a class="${cardClasses.join(' ')}" href="${escapeHtml(href)}" target="${target}" title="${escapeHtml(titleAttr)}">
-          ${previewSrc
-            ? `<img loading="lazy" src="${escapeHtml(previewSrc)}" alt="">`
-            : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#444">no preview</div>`}
-          ${badges.length ? `<div class="badges">${badges.join('')}</div>` : ''}
-          <div class="label">${escapeHtml(label)}</div>
-        </a>`;
-      },
-    };
+}
+// Delegate clicks inside the lightbox caption (PhotoSwipe re-creates the DOM each open).
+document.addEventListener('click', (ev) => {
+  const t = ev.target.closest('[data-copy]');
+  if (t) {
+    ev.preventDefault();
+    copyToClipboard(t.getAttribute('data-copy'), t);
   }
+});
 
-  const tabs = {
-    outputs: Outputs,
-    loras: buildModelsTab('loras', {
-      sidebarTitle: 'Subfolders', emptyTitle: 'No LoRAs indexed',
-      modelsDir: 'models/loras/', unit: 'LoRA',
-    }),
-    checkpoints: buildModelsTab('checkpoints', {
-      sidebarTitle: 'Subfolders', emptyTitle: 'No checkpoints indexed',
-      modelsDir: 'models/checkpoints/', unit: 'checkpoint',
-    }),
-    embeddings: buildModelsTab('embeddings', {
-      sidebarTitle: 'Subfolders', emptyTitle: 'No embeddings indexed',
-      modelsDir: 'models/embeddings/', unit: 'embedding',
-    }),
-  };
-
-  function setActiveTab(name) {
-    $tabs.querySelectorAll('button').forEach(b =>
-      b.classList.toggle('active', b.dataset.tab === name));
-    if (window.location.hash.replace('#', '') !== name) {
-      history.replaceState(null, '', '#' + name);
-    }
-    if (tabs[name]) tabs[name].init();
-  }
-
-  $tabs.querySelectorAll('button').forEach(b => {
-    if (b.disabled) return;
-    b.addEventListener('click', () => setActiveTab(b.dataset.tab));
+// --------- Lightbox factory (one per tab kind) ----------
+const _lightboxes = {};
+function getLightbox(kind, captionRenderer) {
+  if (_lightboxes[kind]) return _lightboxes[kind];
+  const lb = new PhotoSwipeLightbox({
+    pswpModule: PhotoSwipe,
+    bgOpacity: 0.92,
+    showHideAnimationType: 'fade',
+    padding: { top: 20, bottom: 20, left: 320, right: 20 },
   });
+  new PhotoSwipeDynamicCaption(lb, {
+    type: 'aside',
+    captionContent: (slide) => captionRenderer(slide.data),
+  });
+  new DeepZoom(lb, {
+    tileSize: 256,
+    incrementalZoomButtons: false,
+  });
+  lb.init();
+  _lightboxes[kind] = lb;
+  return lb;
+}
 
-  // Initial tab from URL hash, fallback to outputs.
-  const initial = (window.location.hash || '#outputs').replace('#', '');
-  setActiveTab(tabs[initial] ? initial : 'outputs');
-})();
+// --------- Caption renderers per tab ----------
+function captionImage(d) {
+  const m = d._fooocusMeta || {};
+  const rows = [];
+  const get = k => m[k] != null ? String(m[k]) : null;
+  const pushRow = (k, v) => { if (v != null && v !== '') rows.push({k, v}); };
+  pushRow('Sampler', get('sampler') || get('sampler_name'));
+  pushRow('Scheduler', get('scheduler') || get('scheduler_name'));
+  pushRow('CFG',     get('guidance_scale') || get('cfg_scale') || get('cfg'));
+  pushRow('Steps',   get('steps'));
+  pushRow('Seed',    get('seed'));
+  pushRow('Resolution', get('resolution') || (d.width && d.height ? `${d.width}x${d.height}` : null));
+  pushRow('Model',   get('base_model') || get('model'));
+  pushRow('Refiner', get('refiner_model'));
+  pushRow('LoRAs',   get('loras'));
+  pushRow('Created', d._createdAt);
+
+  const promptText = get('prompt') || get('positive') || '';
+  const negativeText = get('negative_prompt') || get('negative') || '';
+
+  const allParamsText = JSON.stringify(m, null, 2);
+
+  return `<h2>${escapeHtml(d._filename || 'image')}</h2>
+    ${promptText ? `<div class="meta-row"><span class="k">Prompt</span><div class="v">${escapeHtml(promptText)}</div></div>` : ''}
+    ${negativeText ? `<div class="meta-row"><span class="k">Negative</span><div class="v">${escapeHtml(negativeText)}</div></div>` : ''}
+    ${rows.map(r => `<div class="meta-row"><span class="k">${escapeHtml(r.k)}</span><span class="v">${escapeHtml(r.v)}</span></div>`).join('')}
+    <div class="copy-row">
+      ${promptText ? `<button data-copy="${escapeHtml(promptText)}">📋 Prompt</button>` : ''}
+      ${negativeText ? `<button data-copy="${escapeHtml(negativeText)}">📋 Negative</button>` : ''}
+      <button data-copy="${escapeHtml(allParamsText)}">📋 All params (JSON)</button>
+    </div>`;
+}
+function captionLora(d) {
+  const it = d._item || {};
+  const triggers = (it.trigger_words || []).join(', ');
+  return `<h2>${escapeHtml(it.filename)}</h2>
+    <div class="meta-row"><span class="k">Path</span><span class="v">${escapeHtml(it.rel_path)}</span></div>
+    <div class="meta-row"><span class="k">Size</span><span class="v">${fmtBytes(it.size_bytes)}</span></div>
+    <div class="meta-row"><span class="k">Modified</span><span class="v">${escapeHtml(it.modified_at || '')}</span></div>
+    ${triggers ? `<div class="meta-row"><span class="k">Triggers</span><div class="v"><code class="triggers">${escapeHtml(triggers)}</code></div></div>` : '<div class="meta-row"><span class="k">Triggers</span><span class="v" style="opacity:.6">— none —</span></div>'}
+    <div class="copy-row">
+      ${triggers ? `<button data-copy="${escapeHtml(triggers)}">📋 Copy triggers</button>` : ''}
+      <button data-copy="${escapeHtml(it.filename)}">📋 Copy filename</button>
+      ${it.civitai_url ? `<a href="${escapeHtml(it.civitai_url)}" target="_blank">🔗 Open on CivitAI</a>` : ''}
+    </div>`;
+}
+function captionCheckpoint(d) {
+  const it = d._item || {};
+  const c = it.civitai_consensus || {};
+  const consensusRows = Object.keys(c).length
+    ? `<div class="meta-row"><span class="k">Sampler</span><span class="v">${escapeHtml(c.sampler || '?')}</span></div>
+       <div class="meta-row"><span class="k">CFG</span><span class="v">${escapeHtml(String(c.cfg ?? '?'))}</span></div>
+       <div class="meta-row"><span class="k">Steps</span><span class="v">${escapeHtml(String(c.steps ?? '?'))}</span></div>
+       <div class="meta-row"><span class="k">Clip skip</span><span class="v">${escapeHtml(String(c.clip_skip ?? '?'))}</span></div>
+       <div class="meta-row"><span class="k">Top res</span><span class="v">${escapeHtml(c.top_resolution || '?')}</span></div>`
+    : '<div class="meta-row"><span class="k">Consensus</span><span class="v" style="opacity:.6">— not in cache (use CivitAI panel in Fooocus) —</span></div>';
+  const consensusJson = JSON.stringify(c, null, 2);
+  return `<h2>${escapeHtml(it.filename)}</h2>
+    <div class="meta-row"><span class="k">Path</span><span class="v">${escapeHtml(it.rel_path)}</span></div>
+    <div class="meta-row"><span class="k">Size</span><span class="v">${fmtBytes(it.size_bytes)}</span></div>
+    ${it.base_model ? `<div class="meta-row"><span class="k">Base</span><span class="v">${escapeHtml(it.base_model)}</span></div>` : ''}
+    ${consensusRows}
+    <div class="copy-row">
+      ${Object.keys(c).length ? `<button data-copy="${escapeHtml(consensusJson)}">📋 Copy consensus (JSON)</button>` : ''}
+      <button data-copy="${escapeHtml(it.filename)}">📋 Copy filename</button>
+      ${it.civitai_url ? `<a href="${escapeHtml(it.civitai_url)}" target="_blank">🔗 Open on CivitAI</a>` : ''}
+    </div>`;
+}
+function captionEmbedding(d) {
+  const it = d._item || {};
+  const triggers = (it.trigger_words || []).join(', ');
+  const embToken = `(embedding:${it.trigger}:1.0)`;
+  return `<h2>${escapeHtml(it.filename)}</h2>
+    <div class="meta-row"><span class="k">Trigger</span><div class="v"><code class="triggers">${escapeHtml(it.trigger)}</code></div></div>
+    <div class="meta-row"><span class="k">Likely use</span><span class="v">${it.is_negative_hint ? '<b style="color:#ff8a8a">negative prompt</b>' : 'positive prompt'}</span></div>
+    <div class="meta-row"><span class="k">Path</span><span class="v">${escapeHtml(it.rel_path)}</span></div>
+    <div class="meta-row"><span class="k">Size</span><span class="v">${fmtBytes(it.size_bytes)}</span></div>
+    ${triggers ? `<div class="meta-row"><span class="k">Extra triggers</span><div class="v"><code class="triggers">${escapeHtml(triggers)}</code></div></div>` : ''}
+    <div class="copy-row">
+      <button data-copy="${escapeHtml(embToken)}">📋 ${escapeHtml(embToken)}</button>
+      <button data-copy="${escapeHtml(it.trigger)}">📋 Trigger only</button>
+      ${it.civitai_url ? `<a href="${escapeHtml(it.civitai_url)}" target="_blank">🔗 Open on CivitAI</a>` : ''}
+    </div>`;
+}
+
+// --------- Image dimension probe (used when manifest doesn't have width/height) ----------
+const _dimCache = new Map();
+function probeDimensions(url) {
+  if (_dimCache.has(url)) return Promise.resolve(_dimCache.get(url));
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => { const d = {w: img.naturalWidth, h: img.naturalHeight}; _dimCache.set(url, d); resolve(d); };
+    img.onerror = () => { const d = {w: 1024, h: 1024}; _dimCache.set(url, d); resolve(d); };
+    img.src = url;
+  });
+}
+
+// --------- OUTPUTS TAB ----------
+const Outputs = {
+  days: [], today: null, activeDate: null, _slides: [],
+  async init() {
+    $sidebarTitle.textContent = 'Days';
+    const idx = await fetchJson('./_index/days.json');
+    if (!idx) {
+      renderEmpty($sidebarList, 'No <code>_index/days.json</code>.');
+      renderEmpty($main, 'Asset Browser has not built its outputs index yet.<br><br>'
+        + 'In Fooocus go to <b>Advanced → 🖼️ Asset Browser</b> and click '
+        + '<code>🔄 Reindex everything now</code>, or generate a new image.');
+      return;
+    }
+    this.days = idx.days || []; this.today = idx.today;
+    this.renderSidebar();
+    const initial = this.days.find(d => d.date === this.today) || this.days[0];
+    if (initial) this.loadDay(initial.date);
+    else renderEmpty($main, '<b>No days yet.</b>');
+  },
+  renderSidebar() {
+    if (this.days.length === 0) { renderEmpty($sidebarList, 'No days indexed.'); return; }
+    $sidebarList.innerHTML = this.days.map(d => `
+      <div class="item${d.date === this.today ? ' today' : ''}${d.date === this.activeDate ? ' active' : ''}" data-date="${escapeHtml(d.date)}">
+        <span>${escapeHtml(d.date)}</span><span class="count">${d.count}</span>
+      </div>`).join('');
+    $sidebarList.querySelectorAll('.item').forEach(el =>
+      el.addEventListener('click', () => this.loadDay(el.dataset.date)));
+  },
+  async loadDay(date) {
+    this.activeDate = date;
+    this.renderSidebar();
+    const manifest = await fetchJson(`./${date}/manifest.json`);
+    if (!manifest || !manifest.images || manifest.images.length === 0) {
+      renderEmpty($main, `No manifest for ${date} yet.`); return;
+    }
+    // Prepare slides for the lightbox.
+    this._slides = await Promise.all(manifest.images.map(async (img) => {
+      let w = img.width, h = img.height;
+      if (!w || !h) { const d = await probeDimensions(`./${date}/${img.src}`); w = d.w; h = d.h; }
+      return {
+        src: `./${date}/${encodeURIComponent(img.src)}`,
+        msrc: img.thumb ? `./${date}/${encodeURIComponent(img.thumb)}` : undefined,
+        width: w, height: h,
+        _filename: img.src,
+        _createdAt: img.created_at,
+        _fooocusMeta: img.metadata || {},
+      };
+    }));
+    const lb = getLightbox('outputs', captionImage);
+    lb.options.dataSource = this._slides;
+    $main.innerHTML = `<div class="grid">${manifest.images.map((img, i) => {
+      const thumb = img.thumb || img.src;
+      return `<div class="card" data-idx="${i}" title="${escapeHtml(img.src)}">
+        <img loading="lazy" src="./${date}/${encodeURIComponent(thumb)}" alt="">
+        <div class="label">${escapeHtml(img.src)}</div>
+      </div>`;
+    }).join('')}</div>`;
+    $main.querySelectorAll('.card').forEach(el => {
+      el.addEventListener('click', () => lb.loadAndOpen(parseInt(el.dataset.idx, 10)));
+    });
+    $footer.textContent = `${date} — ${fmtCount(manifest.images.length, 'image')}`;
+  },
+};
+
+// --------- MODELS TABS (loras / checkpoints / embeddings) ----------
+function buildModelsTab(kind, opts) {
+  return {
+    kind, file: `./_index/${kind}.json`,
+    items: [], subfolders: [], activeSubfolder: '__all__', _slides: [],
+    async init() {
+      $sidebarTitle.textContent = opts.sidebarTitle;
+      const idx = await fetchJson(this.file);
+      if (!idx || !idx.items || idx.items.length === 0) {
+        renderEmpty($sidebarList, `No <code>${kind}.json</code> yet.`);
+        renderEmpty($main, `<b>${opts.emptyTitle}</b><br><br>`
+          + 'Click <code>🔄 Reindex everything now</code> in Fooocus → '
+          + 'Advanced → 🖼️ Asset Browser to scan your <code>'
+          + opts.modelsDir + '</code> folder.');
+        return;
+      }
+      this.items = idx.items;
+      this.subfolders = this.computeSubfolders();
+      this.renderSidebar();
+      this.renderGrid();
+      $footer.textContent = `${fmtCount(this.items.length, opts.unit)} indexed at ${idx.generated_at || '?'}`;
+    },
+    computeSubfolders() {
+      const counts = new Map();
+      for (const it of this.items) {
+        const f = it.subfolder || '.';
+        counts.set(f, (counts.get(f) || 0) + 1);
+      }
+      return Array.from(counts.entries())
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    },
+    renderSidebar() {
+      const total = this.items.length;
+      const head = `<div class="item${this.activeSubfolder === '__all__' ? ' active' : ''}" data-sub="__all__">
+          <span>All</span><span class="count">${total}</span></div>`;
+      const rest = this.subfolders.map(sf => {
+        const label = sf.name === '.' ? '(root)' : sf.name;
+        return `<div class="item${this.activeSubfolder === sf.name ? ' active' : ''}" data-sub="${escapeHtml(sf.name)}">
+          <span>${escapeHtml(label)}</span><span class="count">${sf.count}</span></div>`;
+      }).join('');
+      $sidebarList.innerHTML = head + rest;
+      $sidebarList.querySelectorAll('.item').forEach(el => {
+        el.addEventListener('click', () => {
+          this.activeSubfolder = el.dataset.sub;
+          this.renderSidebar(); this.renderGrid();
+        });
+      });
+    },
+    async renderGrid() {
+      const filtered = this.activeSubfolder === '__all__'
+        ? this.items
+        : this.items.filter(it => (it.subfolder || '.') === this.activeSubfolder);
+      if (filtered.length === 0) { renderEmpty($main, 'Nothing in this subfolder.'); return; }
+
+      // Slides for lightbox: we use the 256x256 preview as src (M3 limitation
+      // — no full-res sidecar pass-through yet). DeepZoom plugin still allows
+      // pinch-zoom on it via its CSS-fallback mode.
+      this._slides = filtered.map(it => ({
+        src: it.preview ? `./${it.preview}` : '',
+        width: 256, height: 256,
+        _item: it,
+      }));
+      const lb = getLightbox(this.kind, opts.captionRenderer);
+      lb.options.dataSource = this._slides;
+
+      $main.innerHTML = `<div class="grid">${filtered.map((it, i) => this.renderCard(it, i)).join('')}</div>`;
+      $main.querySelectorAll('.card').forEach(el => {
+        el.addEventListener('click', () => lb.loadAndOpen(parseInt(el.dataset.idx, 10)));
+      });
+    },
+    renderCard(it, i) {
+      const previewSrc = it.preview ? `./${it.preview}` : '';
+      const cls = ['card']; if (it.preview_kind === 'placeholder') cls.push('placeholder');
+      if (it.is_negative_hint) cls.push('negative');
+      const badges = [];
+      if (it.trigger_words && it.trigger_words.length)
+        badges.push(`<span title="${escapeHtml(it.trigger_words.join(', '))}">⚡ ${it.trigger_words.length}</span>`);
+      if (it.civitai_url) badges.push(`<span title="On CivitAI">🔗</span>`);
+      if (it.is_negative_hint) badges.push(`<span title="Likely a negative-prompt embedding">−</span>`);
+      if (it.civitai_consensus) badges.push(`<span title="Has CivitAI consensus settings">📊</span>`);
+      const label = it.filename;
+      const titleAttr = `${it.rel_path} · ${fmtBytes(it.size_bytes)}`
+        + (it.trigger_words && it.trigger_words.length ? `\nTriggers: ${it.trigger_words.join(', ')}` : '');
+      return `<div class="${cls.join(' ')}" data-idx="${i}" title="${escapeHtml(titleAttr)}">
+        ${previewSrc
+          ? `<img loading="lazy" src="${escapeHtml(previewSrc)}" alt="">`
+          : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#444">no preview</div>`}
+        ${badges.length ? `<div class="badges">${badges.join('')}</div>` : ''}
+        <div class="label">${escapeHtml(label)}</div>
+      </div>`;
+    },
+  };
+}
+
+const tabs = {
+  outputs: Outputs,
+  loras: buildModelsTab('loras', {
+    sidebarTitle: 'Subfolders', emptyTitle: 'No LoRAs indexed',
+    modelsDir: 'models/loras/', unit: 'LoRA',
+    captionRenderer: captionLora,
+  }),
+  checkpoints: buildModelsTab('checkpoints', {
+    sidebarTitle: 'Subfolders', emptyTitle: 'No checkpoints indexed',
+    modelsDir: 'models/checkpoints/', unit: 'checkpoint',
+    captionRenderer: captionCheckpoint,
+  }),
+  embeddings: buildModelsTab('embeddings', {
+    sidebarTitle: 'Subfolders', emptyTitle: 'No embeddings indexed',
+    modelsDir: 'models/embeddings/', unit: 'embedding',
+    captionRenderer: captionEmbedding,
+  }),
+};
+
+function setActiveTab(name) {
+  $tabs.querySelectorAll('button').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === name));
+  if (window.location.hash.replace('#', '') !== name) {
+    history.replaceState(null, '', '#' + name);
+  }
+  if (tabs[name]) tabs[name].init();
+}
+
+$tabs.querySelectorAll('button').forEach(b => {
+  if (b.disabled) return;
+  b.addEventListener('click', () => setActiveTab(b.dataset.tab));
+});
+
+// Initial tab from URL hash, fallback to outputs.
+const initial = (window.location.hash || '#outputs').replace('#', '');
+setActiveTab(tabs[initial] ? initial : 'outputs');
 </script>
 </body>
 </html>
