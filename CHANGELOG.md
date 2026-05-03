@@ -3,6 +3,19 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [config extension] — 2026-05-03 (post-custom-8)
+### Added
+- **`path_civitai_cache`** in `config.txt` — was hardcoded `./civitai_cache`, now configurable. Default value preserves the historical behaviour, so existing installs see no change. Useful when the user wants the CivitAI response cache on a different drive (large LoRA collections + checkpoints can produce hundreds of MB of cache).
+- **Extended `asset_browser` block** with 4 new tunable sub-keys:
+  - `thumbnail_size` (default 256, clamp 64..1024) — square JPEG thumbnail dimension. Setting 128 cuts disk usage and grid load time by ~75%.
+  - `thumbnail_quality` (default 85, clamp 40..100) — JPEG quality. 70 ~halves thumbnail file size at minor visual cost.
+  - `dzi_threshold_mp` (default 4.0, clamp 0.5..64.0) — megapixel threshold for `generate_dzi_tiles='auto'` mode. (DZI generation itself still deferred.)
+  - `placeholder_label_max` (default 24, clamp 8..64) — character limit for the filename overlay on auto-generated placeholder previews.
+### Changed
+- `modules/civitai_api.py::CIVITAI_CACHE_DIR` is now computed lazily from `modules.config.path_civitai_cache` (with `./civitai_cache` fallback for back-compat). The legacy module-level constant is kept for any external code that imports it.
+- `modules/gallery_writer.py` and `modules/model_indexer.py` no longer hardcode 256/85 — they read `thumbnail_size` and `thumbnail_quality` from the config block via `asset_browser_setting()`. `model_indexer.py` also reads `placeholder_label_max` for the placeholder overlay truncation logic.
+- `write_asset_browser_settings()` validator extended with per-key clamp ranges so a malformed UI value can never poison `config.txt`.
+
 ## [custom-8] — 2026-05-03 — Asset Browser (autonomous module)
 ### Added
 - **🖼️ Asset Browser** — a standalone HTML/JSON gallery served from `outputs/index.html`, opened in a new browser tab from the **🖼️ Asset Browser** link next to **📚 History Log**. Built on **PhotoSwipe v5** + **Dynamic Caption plugin** + **Deep Zoom plugin** (all MIT, ESM modules bundled in `outputs/_assets/`, no CDN). Vanilla JS SPA — no React/Vue, ~50 KB gzip total payload.

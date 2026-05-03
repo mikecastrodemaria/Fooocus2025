@@ -23,16 +23,37 @@ from modules.util import get_file_from_folder_list, calculate_sha256
 
 CIVITAI_API_BASE = 'https://civitai.com/api/v1'
 REQUEST_TIMEOUT = 15  # seconds
-CIVITAI_CACHE_DIR = os.path.abspath('./civitai_cache')
 
 # Cache for full SHA256 hashes (CivitAI needs the full 64-char hash, not Fooocus's truncated 10-char)
 _full_hash_cache = {}
 
 
+def _cache_dir():
+    """Resolve the CivitAI cache dir lazily so a config.txt change is honoured
+    without re-importing this module. Defaults to the historical
+    ./civitai_cache for full back-compat with installs that don't set
+    path_civitai_cache.
+    """
+    try:
+        from modules import config
+        path = getattr(config, 'path_civitai_cache', None)
+        if path:
+            return os.path.abspath(path)
+    except Exception:
+        pass
+    return os.path.abspath('./civitai_cache')
+
+
+# Legacy module-level constant kept for any external code that imports it.
+# Computed once at first import; in normal usage modules.config is already
+# loaded by the time civitai_api is first imported (config -> civitai_api).
+CIVITAI_CACHE_DIR = _cache_dir()
+
+
 def _get_cache_path(model_filename):
     """Get the local cache file path for a model's CivitAI settings."""
     safe_name = os.path.splitext(os.path.basename(model_filename))[0]
-    return os.path.join(CIVITAI_CACHE_DIR, f'{safe_name}.civitai.json')
+    return os.path.join(_cache_dir(), f'{safe_name}.civitai.json')
 
 
 def load_cached_settings(model_filename):
@@ -65,7 +86,7 @@ def save_settings_to_cache(model_filename, result):
         return  # Don't cache errors
 
     try:
-        os.makedirs(CIVITAI_CACHE_DIR, exist_ok=True)
+        os.makedirs(_cache_dir(), exist_ok=True)
         cache_path = _get_cache_path(model_filename)
         # Remove internal keys before saving
         to_save = {k: v for k, v in result.items() if not k.startswith('_')}
@@ -504,7 +525,7 @@ def _get_triggers_cache_path(filename, kind='lora'):
     """Local cache file for a model's trigger words, namespaced by kind."""
     safe_name = os.path.splitext(os.path.basename(filename))[0]
     suffix = _CACHE_SUFFIX_BY_KIND.get(kind, kind)
-    return os.path.join(CIVITAI_CACHE_DIR, f'{safe_name}.{suffix}.civitai.json')
+    return os.path.join(_cache_dir(), f'{safe_name}.{suffix}.civitai.json')
 
 
 def _get_lora_cache_path(lora_filename):
@@ -525,7 +546,7 @@ def load_cached_triggers(filename, kind='lora'):
 
 def save_triggers_to_cache(filename, data, kind='lora'):
     try:
-        os.makedirs(CIVITAI_CACHE_DIR, exist_ok=True)
+        os.makedirs(_cache_dir(), exist_ok=True)
         path = _get_triggers_cache_path(filename, kind=kind)
         to_save = {k: v for k, v in data.items() if not k.startswith('_')}
         with open(path, 'w', encoding='utf-8') as f:

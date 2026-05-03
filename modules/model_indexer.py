@@ -35,7 +35,18 @@ from modules.util import get_file_from_folder_list
 INDEX_DIR_NAME = '_index'
 PREVIEWS_DIR_NAME = '_previews'
 PLACEHOLDER_DIR_NAME = 'placeholders'
-PREVIEW_THUMB_SIZE = 256
+
+
+def _thumb_size() -> int:
+    return int(modules.config.asset_browser_setting('thumbnail_size', 256))
+
+
+def _thumb_quality() -> int:
+    return int(modules.config.asset_browser_setting('thumbnail_quality', 85))
+
+
+def _placeholder_label_max() -> int:
+    return int(modules.config.asset_browser_setting('placeholder_label_max', 24))
 
 # Lookup order for sidecar previews (A1111 / ComfyUI compatible).
 PREVIEW_SUFFIXES = [
@@ -115,7 +126,7 @@ def _make_placeholder_png(filename_for_label: str, dest_path: str) -> bool:
         c1 = (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
         c2 = (int(h[6:8], 16), int(h[8:10], 16), int(h[10:12], 16))
 
-        size = PREVIEW_THUMB_SIZE
+        size = _thumb_size()
         im = Image.new('RGB', (size, size), c1)
         # Vertical linear gradient from c1 to c2.
         for y in range(size):
@@ -129,8 +140,11 @@ def _make_placeholder_png(filename_for_label: str, dest_path: str) -> bool:
         draw = ImageDraw.Draw(im)
         # Filename overlay (basename, no extension) — broken into chunks if too long.
         label = os.path.splitext(os.path.basename(filename_for_label))[0]
-        if len(label) > 24:
-            label = label[:11] + '…' + label[-12:]
+        max_len = _placeholder_label_max()
+        if len(label) > max_len:
+            head = max(4, (max_len - 1) // 2)
+            tail = max(4, max_len - head - 1)
+            label = label[:head] + '…' + label[-tail:]
         try:
             font = ImageFont.truetype('arial.ttf', 14)
         except Exception:
@@ -168,9 +182,10 @@ def _make_preview_thumb(source_path: str, dest_path: str) -> bool:
             left = (w - side) // 2
             top = (h - side) // 2
             im = im.crop((left, top, left + side, top + side))
-            im = im.resize((PREVIEW_THUMB_SIZE, PREVIEW_THUMB_SIZE), Image.LANCZOS)
+            sz = _thumb_size()
+            im = im.resize((sz, sz), Image.LANCZOS)
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-            im.save(dest_path, 'JPEG', quality=85, optimize=True)
+            im.save(dest_path, 'JPEG', quality=_thumb_quality(), optimize=True)
         return True
     except Exception as e:
         print(f'[asset-browser] preview thumb failed for {source_path}: {e}')

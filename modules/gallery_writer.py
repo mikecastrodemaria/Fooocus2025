@@ -23,13 +23,20 @@ import modules.config
 # Constants & paths
 # --------------------------------------------------------------------------
 
-THUMBNAIL_SIZE = 256
 THUMBNAIL_SUFFIX = '_thumb.jpg'
 TEMPLATE_DIR_NAME = 'gallery_template'
 INDEX_DIR_NAME = '_index'
 ASSETS_DIR_NAME = '_assets'
 DAYS_INDEX_FILE = 'days.json'
 MANIFEST_FILE = 'manifest.json'
+
+
+def _thumb_size() -> int:
+    return int(modules.config.asset_browser_setting('thumbnail_size', 256))
+
+
+def _thumb_quality() -> int:
+    return int(modules.config.asset_browser_setting('thumbnail_quality', 85))
 
 # Process-wide lock — manifests are read-modify-write JSON files; without a
 # lock two parallel image saves on the same day would race and clobber.
@@ -133,8 +140,9 @@ def _generate_thumbnail(image_path: str) -> bool:
             left = (w - side) // 2
             top = (h - side) // 2
             im = im.crop((left, top, left + side, top + side))
-            im = im.resize((THUMBNAIL_SIZE, THUMBNAIL_SIZE), Image.LANCZOS)
-            im.save(thumb_path, 'JPEG', quality=85, optimize=True)
+            sz = _thumb_size()
+            im = im.resize((sz, sz), Image.LANCZOS)
+            im.save(thumb_path, 'JPEG', quality=_thumb_quality(), optimize=True)
         return True
     except Exception as e:
         print(f'[asset-browser] thumbnail failed for {image_path}: {e}')

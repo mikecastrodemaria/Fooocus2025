@@ -202,6 +202,11 @@ path_wildcards = get_dir_or_set_default('path_wildcards', '../wildcards/')
 path_safety_checker = get_dir_or_set_default('path_safety_checker', '../models/safety_checker/')
 path_sam = get_dir_or_set_default('path_sam', '../models/sam/')
 path_outputs = get_path_output()
+# custom-2 retrofit (custom-8): CivitAI response cache directory now configurable
+# via the `path_civitai_cache` key in config.txt. Default `./civitai_cache`
+# preserves the previous hardcoded behaviour. Useful when the user wants the
+# cache on a different drive (e.g. fast SSD) than the Fooocus install.
+path_civitai_cache = get_dir_or_set_default('path_civitai_cache', './civitai_cache')
 
 
 def get_config_item_or_set_default(key, default_value, validator, disable_empty_as_none=False, expected_type=None):
@@ -497,11 +502,17 @@ default_inpaint_engine_version = get_config_item_or_set_default(
 # === custom-8: Asset Browser (autonomous module, OFF by default) ===
 # Toggle is non-negotiable — when enabled=False the gallery writer + model
 # indexer must have <1µs overhead so users on old hardware see zero impact.
+# When enabled, the sub-keys below tune the heaviness of each operation so
+# users can dial down further on slower machines.
 _asset_browser_defaults = {
     'enabled': False,
     'generate_thumbnails': True,        # ~10ms per image when enabled
     'generate_dzi_tiles': 'auto',       # 'auto' (>4MP), 'always', 'never'
     'index_models_on_boot': True,       # ~2-5s in daemon thread when enabled
+    'thumbnail_size': 256,              # px, square JPEG centre-crop. 128 cuts I/O ~75%.
+    'thumbnail_quality': 85,            # JPEG quality 1-100. 70 ~halves disk usage vs 85.
+    'dzi_threshold_mp': 4.0,            # only kicks in when generate_dzi_tiles='auto'.
+    'placeholder_label_max': 24,        # filename length on placeholder images before truncation.
 }
 asset_browser_config = get_config_item_or_set_default(
     key='asset_browser',
@@ -535,7 +546,12 @@ def asset_browser_enabled():
 
 
 def write_asset_browser_settings(updates: dict) -> tuple:
-    """Persist user toggles back to config.txt. Returns (ok, message)."""
+    """Persist user toggles back to config.txt. Returns (ok, message).
+
+    Each known sub-key has its own validator/clamp so a malformed UI value
+    can never poison config.txt. Unknown keys are silently dropped.
+    """
+    _bool_keys = {'enabled', 'generate_thumbnails', 'index_models_on_boot'}
     try:
         if not isinstance(updates, dict):
             return False, 'Invalid settings payload.'
@@ -546,8 +562,34 @@ def write_asset_browser_settings(updates: dict) -> tuple:
             if k == 'generate_dzi_tiles':
                 if v not in ('auto', 'always', 'never'):
                     continue
-            else:
+            elif k == 'thumbnail_size':
+                try:
+                    iv = int(v)
+                except (TypeError, ValueError):
+                    continue
+                v = max(64, min(1024, iv))                    # clamp 64..1024
+            elif k == 'thumbnail_quality':
+                try:
+                    iv = int(v)
+                except (TypeError, ValueError):
+                    continue
+                v = max(40, min(100, iv))                     # clamp 40..100
+            elif k == 'dzi_threshold_mp':
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    continue
+                v = max(0.5, min(64.0, fv))                   # clamp 0.5..64 MP
+            elif k == 'placeholder_label_max':
+                try:
+                    iv = int(v)
+                except (TypeError, ValueError):
+                    continue
+                v = max(8, min(64, iv))                       # clamp 8..64 chars
+            elif k in _bool_keys:
                 v = bool(v)
+            else:
+                continue                                       # unknown shape -> drop
             cleaned[k] = v
         asset_browser_config.update(cleaned)
         config_dict['asset_browser'] = asset_browser_config
