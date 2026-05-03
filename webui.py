@@ -1078,8 +1078,12 @@ with shared.gradio_root:
                                else '<span style="color:#888;">'
                                     '\U0001F5BC️ Asset Browser (disabled — enable above and Save)</span>'))
                     gr.HTML('<div style="font-size:11px;color:#888;margin-top:4px;">'
-                            'Status: <b>M1 (Foundation)</b> shipped — toggle + plumbing only. '
-                            'M2 ships the actual gallery writer + model indexer; M3 the SPA frontend.'
+                            'Outputs gallery + LoRAs / Checkpoints / Embeddings tabs · '
+                            'PhotoSwipe v5 lightbox · Dynamic Caption sidebar · '
+                            'click-to-zoom · Copy buttons. '
+                            'Generated artifacts under <code>outputs/_index</code> + '
+                            '<code>outputs/_previews</code> + <code>outputs/_assets</code> '
+                            '(all gitignored).'
                             '</div>')
 
                     def _ab_save_and_status(enabled, thumbs, dzi, index_boot):
