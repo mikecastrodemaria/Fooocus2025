@@ -3,6 +3,20 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-8.6] — 2026-05-03 — Backfill PNG metadata during reindex (Copy All Params no longer empty)
+### Fixed
+- **`📋 All params (JSON)` button in the Outputs lightbox returned `{}` for all images that were backfilled by Reindex.** Root cause: `_build_image_entry()` was only populating `metadata` when called by the live `on_image_logged()` hook (which Fooocus passes the metadata tuple list to). The reindex path called it with `metadata=None` → empty dict → `JSON.stringify({})` → `{}`. Affected every image generated before the user enabled Asset Browser.
+### Changed
+- **`modules/gallery_writer.py::_extract_metadata_from_image_file(path)`** new helper that opens the PNG/JPEG/WebP via Pillow and calls Fooocus's existing `meta_parser.read_info_from_image()` to extract the metadata. Two cases:
+  - Fooocus JSON scheme → returns the parsed dict directly (structured: `sampler`, `cfg_scale`, `steps`, `seed`, `prompt`, etc.).
+  - A1111 string scheme → returns `{'parameters': '<the raw multiline string>'}` so the Copy All Params button has something to copy AND the lightbox can render it as a Parameters code block.
+- **`_build_image_entry(metadata=None)`** now falls back to `_extract_metadata_from_image_file(image_path)` when no metadata was passed in. Existing call sites are unchanged: the live hook still passes its tuple list, the reindex passes nothing → backfill kicks in.
+- **`captionImage()` in the SPA** now handles 3 metadata shapes:
+  - Structured Fooocus dict → renders the existing `Sampler / CFG / Steps / Seed / …` rows.
+  - Raw A1111 string → renders a `Parameters` row with a scrollable `<code>` block showing the full A1111 line; Copy button copies the raw A1111 string instead of `{}`.
+  - Empty (image predates the hook AND has no PNG `parameters` chunk) → shows a hint pointing to the Reindex button.
+- **`_build_image_entry(metadata=...)`** also now accepts a flat dict (in addition to the tuple list it already accepted), so callers that already have a dict don't need to convert.
+
 ## [custom-8.5] — 2026-05-03 — Drop eager preview-dimension probing (perf fix)
 ### Fixed
 - **Model tabs no longer fetch every full-resolution preview just to read its dimensions.** The previous SPA `renderGrid` did `await Promise.all(filtered.map(it => probeDimensions(it.preview_full)))` to feed PhotoSwipe correct widths/heights. On a tab with thousands of items (5234 LoRAs in the user's case), this triggered thousands of HTTP fetches of preview files (10 KB placeholders to multi-MB sidecars) on every tab open / subfolder change. Could blow up to several GB of unnecessary downloads.
