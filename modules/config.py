@@ -1063,6 +1063,241 @@ vae_filenames = []
 wildcard_filenames = []
 embedding_filenames = []
 
+# ---------------------------------------------------------------------------
+# Checkpoint architecture detection (header-only, no weight loading)
+# ---------------------------------------------------------------------------
+import struct as _struct
+
+_ARCH_CACHE_NAME = 'model_arch_cache.json'
+
+
+def _arch_cache_path():
+    """Return path to the arch-detection cache file next to this module."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', _ARCH_CACHE_NAME)
+
+
+def _load_arch_cache():
+    p = _arch_cache_path()
+    if os.path.isfile(p):
+        try:
+            with open(p, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_arch_cache(cache):
+    try:
+        with open(_arch_cache_path(), 'w', encoding='utf-8') as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        print(f'[arch-filter] cache write failed: {e}')
+
+
+def _read_safetensors_keys(filepath):
+    """Read tensor key names from a safetensors header. Returns set or None."""
+    if not filepath.lower().endswith('.safetensors'):
+        return None
+    try:
+        with open(filepath, 'rb') as f:
+            raw = f.read(8)
+            if len(raw) < 8:
+                return None
+            header_len = _struct.unpack('<Q', raw)[0]
+            if header_len > 100 * 1024 * 1024:
+                return None
+            header_bytes = f.read(header_len)
+        header = json.loads(header_bytes)
+        return set(header.keys()) - {'__metadata__'}
+    except Exception:
+        return None
+
+
+def _detect_checkpoint_arch(filepath):
+    """Detect checkpoint architecture from safetensors header.
+
+    Returns: 'sdxl', 'sd', 'sd3', 'flux', 'svd', 'other', or 'no_header'.
+    'no_header' means non-safetensors file (can't detect without loading).
+    """
+    keys = _read_safetensors_keys(filepath)
+    if keys is None:
+        return 'no_header'
+
+    has_input_blocks = any(k.startswith('model.diffusion_model.input_blocks.') for k in keys)
+    has_joint_blocks = any(k.startswith('model.diffusion_model.joint_blocks.') for k in keys)
+    has_double_blocks = any(k.startswith('double_blocks.') for k in keys)
+    has_single_blocks = any(k.startswith('single_blocks.') for k in keys)
+    has_label_emb = 'model.diffusion_model.label_emb.0.0.weight' in keys
+
+    if has_joint_blocks:
+        return 'sd3'
+    if has_double_blocks or has_single_blocks:
+        return 'flux'
+    if has_input_blocks:
+        return 'sdxl' if has_label_emb else 'sd'
+    if any('time_stack' in k or 'time_mix' in k for k in keys):
+        return 'svd'
+
+    # safetensors but no diffusion keys → not a checkpoint (LLM, CLIP, VAE, etc.)
+    return 'other'
+
+
+def _detect_lora_arch(filepath):
+    """Detect LoRA architecture from safetensors header.
+
+    Strategy: blacklist incompatible architectures AND full models misplaced
+    in the LoRA folder. Everything else is kept (kohya, diffusers, LyCORIS,
+    LoHa, LoKr, Pony, etc.).
+
+    Returns: 'flux_lora', 'sd3_lora', 'not_a_lora', 'compatible_lora', or 'no_header'.
+    """
+    keys = _read_safetensors_keys(filepath)
+    if keys is None:
+        return 'no_header'
+
+    # --- Blacklist: full models misplaced in LoRA folder ---
+    # Full checkpoints have model.diffusion_model.* or model.layers.* etc.
+    is_full_model = any(
+        k.startswith(('model.diffusion_model.', 'model.layers.',
+                      'model.embed_tokens', 'conditioner.',
+                      'first_stage_model.', 'encoder.', 'decoder.'))
+        for k in keys
+    )
+    # Also catch Flux/Wan/etc full models (double_blocks without lora_ prefix)
+    if not is_full_model:
+        has_raw_blocks = any(
+            k.startswith(('double_blocks.', 'single_blocks.',
+                          'diffusion_model.'))
+            for k in keys
+        )
+        has_lora_prefix = any(k.startswith('lora_') for k in keys)
+        if has_raw_blocks and not has_lora_prefix:
+            is_full_model = True
+    if is_full_model:
+        return 'not_a_lora'
+
+    # --- Blacklist: Flux LoRA patterns ---
+    has_flux = any(
+        k.startswith(('lora_transformer_double', 'lora_transformer_single'))
+        for k in keys
+    )
+    if not has_flux:
+        has_transformer_only = any(k.startswith('transformer.') for k in keys)
+        has_unet_or_te = any(
+            k.startswith(('lora_unet_', 'lora_te', 'unet.', 'text_encoder'))
+            for k in keys
+        )
+        if has_transformer_only and not has_unet_or_te:
+            has_flux = True
+    if has_flux:
+        return 'flux_lora'
+
+    # --- Blacklist: SD3 LoRA patterns ---
+    if any(k.startswith('lora_transformer_joint') for k in keys):
+        return 'sd3_lora'
+
+    # Everything else is considered compatible (SD1.x, SDXL, Pony, LyCORIS, etc.)
+    return 'compatible_lora'
+
+
+def _detect_embedding_arch(filepath):
+    """Detect if an embedding file is compatible with SD/SDXL.
+
+    Embeddings are small files with simple key structures (emb_params, etc.).
+    Full models or LoRAs misplaced here get filtered out.
+
+    Returns: 'compatible_emb', 'not_an_embedding', or 'no_header'.
+    """
+    # Real embeddings are tiny (< 10 MB). If the file is small, it's an embedding
+    # regardless of key names — avoids false positives like badhands, EasyNegative, etc.
+    try:
+        fsize = os.path.getsize(filepath)
+        if fsize < 10 * 1024 * 1024:  # < 10 MB
+            return 'compatible_emb'
+    except OSError:
+        pass
+
+    keys = _read_safetensors_keys(filepath)
+    if keys is None:
+        return 'no_header'
+
+    # Large file + full-model signatures = not an embedding
+    is_full_model = any(
+        k.startswith(('model.diffusion_model.', 'model.layers.',
+                      'model.embed_tokens', 'double_blocks.',
+                      'single_blocks.', 'diffusion_model.',
+                      'conditioner.', 'first_stage_model.',
+                      'lora_unet_', 'lora_transformer_',
+                      'transformer.'))
+        for k in keys
+    )
+    if is_full_model:
+        return 'not_an_embedding'
+
+    return 'compatible_emb'
+
+
+def _resolve_full_path(relative_name, folder_paths):
+    """Find the absolute path for a relative model filename."""
+    if not isinstance(folder_paths, list):
+        folder_paths = [folder_paths]
+    for folder in folder_paths:
+        candidate = os.path.join(folder, relative_name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+_COMPAT_CHECKPOINT = {'sd', 'sdxl', 'no_header'}
+_COMPAT_LORA = {'compatible_lora', 'no_header'}
+_COMPAT_EMBEDDING = {'compatible_emb', 'no_header'}
+
+
+def _filter_by_arch(filenames, folder_paths, detect_fn, compat_set, label):
+    """Generic arch filter. Keeps files whose arch is in compat_set."""
+    cache = _load_arch_cache()
+    filtered = []
+    hidden = []
+    changed = False
+
+    for name in filenames:
+        full = _resolve_full_path(name, folder_paths)
+        if full is None:
+            filtered.append(name)
+            continue
+
+        try:
+            mtime = os.path.getmtime(full)
+        except OSError:
+            filtered.append(name)
+            continue
+
+        cache_key = full.replace('\\', '/')
+        cached = cache.get(cache_key)
+        if cached and cached.get('mtime') == mtime:
+            arch = cached['arch']
+        else:
+            arch = detect_fn(full)
+            cache[cache_key] = {'arch': arch, 'mtime': mtime}
+            changed = True
+
+        if arch in compat_set:
+            filtered.append(name)
+        else:
+            hidden.append((name, arch))
+
+    if hidden:
+        print(f'[arch-filter] Hidden {len(hidden)} incompatible {label}:')
+        for n, a in hidden:
+            print(f'  - {n} ({a})')
+
+    if changed:
+        _save_arch_cache(cache)
+
+    return filtered
+# ---------------------------------------------------------------------------
+
 
 def get_model_filenames(folder_paths, extensions=None, name_filter=None):
     if extensions is None:
@@ -1079,12 +1314,18 @@ def get_model_filenames(folder_paths, extensions=None, name_filter=None):
 
 def update_files():
     global model_filenames, lora_filenames, vae_filenames, wildcard_filenames, embedding_filenames, available_presets
-    model_filenames = get_model_filenames(paths_checkpoints)
-    lora_filenames = get_model_filenames(paths_loras)
+    model_filenames = _filter_by_arch(
+        get_model_filenames(paths_checkpoints), paths_checkpoints,
+        _detect_checkpoint_arch, _COMPAT_CHECKPOINT, 'checkpoint(s)')
+    lora_filenames = _filter_by_arch(
+        get_model_filenames(paths_loras), paths_loras,
+        _detect_lora_arch, _COMPAT_LORA, 'LoRA(s)')
     vae_filenames = get_model_filenames(path_vae)
     wildcard_filenames = get_files_from_folder(path_wildcards, ['.txt'])
-    embedding_filenames = get_model_filenames(
-        [path_embeddings], extensions=['.safetensors', '.pt', '.bin'])
+    embedding_filenames = _filter_by_arch(
+        get_model_filenames([path_embeddings], extensions=['.safetensors', '.pt', '.bin']),
+        [path_embeddings],
+        _detect_embedding_arch, _COMPAT_EMBEDDING, 'embedding(s)')
     available_presets = get_presets()
     return
 

@@ -41,6 +41,13 @@ def javascript_html():
     head += f'<script type="text/javascript" src="{image_viewer_js_path}"></script>\n'
     head += f'<meta name="samples-path" content="{samples_path}">\n'
 
+    # Asset Browser icons script
+    import modules.config
+    ab_index = os.path.join(modules.config.path_outputs, 'index.html').replace('\\', '/')
+    head += f'<meta name="ab-base-url" content="/file={ab_index}">\n'
+    ab_icons_js_path = webpath('javascript/ab_icons.js')
+    head += f'<script type="text/javascript" src="{ab_icons_js_path}"></script>\n'
+
     if args_manager.args.theme:
         head += f'<script type="text/javascript">set_theme(\"{args_manager.args.theme}\");</script>\n'
 

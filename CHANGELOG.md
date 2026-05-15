@@ -3,6 +3,27 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-9] — 2026-05-16 — Architecture filtering + Asset Browser shortcut icons
+
+### Added
+- **Architecture-based model filtering** — checkpoints, LoRAs, and embeddings dropdowns now hide incompatible models automatically. Reads safetensors headers (~1 ms/file, no weight loading) to detect architecture:
+  - **Checkpoints:** keeps SD 1.x and SDXL only; hides Flux, SD3, SVD, LLMs, and unrecognised formats.
+  - **LoRAs:** blacklist approach — blocks Flux LoRAs, SD3 LoRAs, and full models misplaced in the LoRA folder; keeps everything else (kohya, diffusers, LyCORIS, LoHa, LoKr, Pony).
+  - **Embeddings:** file-size guard (< 10 MB = always compatible) prevents false positives on small specialised embeddings (e.g. `badhands.safetensors`); larger files are checked for full-model signatures.
+  - JSON cache (`model_arch_cache.json`) with mtime-based invalidation — delete the file to force a full rescan.
+- **Asset Browser shortcut icons** — small clickable icons next to **Base Model**, **Refiner**, **LoRA**, and **Textual Inversion** headers in the Advanced tab. Each icon opens the corresponding Asset Browser tab (`#checkpoints`, `#loras`, `#embeddings`) in a new browser tab. Implemented as `javascript/ab_icons.js` injected via `<head>` (same pattern as all other Fooocus JS files).
+
+### Changed
+- **`modules/config.py`** — new functions: `_read_safetensors_keys()`, `_detect_checkpoint_arch()`, `_detect_lora_arch()`, `_detect_embedding_arch()`, `_filter_by_arch()`. `update_files()` now applies architecture filtering to checkpoints, LoRAs, and embeddings before populating dropdowns.
+- **`modules/ui_gradio_extensions.py`** — injects `<meta name="ab-base-url">` tag and loads `ab_icons.js` via the standard `<head>` injection pipeline.
+- **`webui.py`** — removed ~60 lines of inline JS icon injection code (replaced by `ab_icons.js`); removed the descriptive HTML block ("Outputs gallery + LoRAs / Checkpoints / Embeddings tabs…") from the Asset Browser accordion.
+- **`.gitignore`** — comprehensive rewrite: organised by category (Python, model weights, models directory, outputs, runtime caches, user config, IDE/OS, environments, legacy, Claude artifacts). Now covers `model_arch_cache.json`, `hash_cache.txt`, `sorted_styles.json`, `civitai_cache/`, and all model weight formats.
+
+### Fixed
+- LoRA dropdown no longer shows full checkpoint models accidentally placed in the LoRA folder (e.g. `z-image`, `wan`).
+- Pony-style LoRAs (LyCORIS/LoHa/LoKr) are no longer falsely filtered — the blacklist approach only rejects known-incompatible patterns.
+- `badhands.safetensors` (small specialised embedding) is no longer falsely hidden thanks to the 10 MB size guard.
+
 ## [custom-8.6] — 2026-05-03 — Backfill PNG metadata during reindex (Copy All Params no longer empty)
 ### Fixed
 - **`📋 All params (JSON)` button in the Outputs lightbox returned `{}` for all images that were backfilled by Reindex.** Root cause: `_build_image_entry()` was only populating `metadata` when called by the live `on_image_logged()` hook (which Fooocus passes the metadata tuple list to). The reindex path called it with `metadata=None` → empty dict → `JSON.stringify({})` → `{}`. Affected every image generated before the user enabled Asset Browser.

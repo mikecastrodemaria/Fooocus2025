@@ -860,7 +860,7 @@ with shared.gradio_root:
                 with gr.Accordion(label='\U0001F3A8 CivitAI Model Settings', open=False):
                     _civitai_key = modules.config.civitai_api_key
                     _civitai_key_display = (f'{_civitai_key[:4]}...{_civitai_key[-4:]}' if len(_civitai_key) > 8 else _civitai_key)
-                    _civitai_key_status = ' <span style="color:#4ecdc4;">(saved)</span>' if _civitai_key else ''
+                    _civitai_key_status = ' (saved)' if _civitai_key else ''
                     with gr.Row():
                         civitai_api_key_input = gr.Textbox(
                             label=f'CivitAI API Key{_civitai_key_status}',

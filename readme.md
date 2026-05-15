@@ -4,7 +4,7 @@
 
 # Fooocus 2025 — Custom Fork
 
-> Version **`2026.2.0`** · A personal fork of **[lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5** with a series of quality-of-life features: a **Save Preset** button, **CivitAI Model Settings** integration (checkpoint triggers, consensus settings, save-as-preset), **LoRA trigger words** from local metadata + CivitAI, **Embeddings panel** with bulk-insert, **Wildcards editor**, **Vary-with-aspect-ratio** override, **Custom Resolution** (any ratio + size, snapped to /64), an **🖼️ Asset Browser** (PhotoSwipe-based standalone gallery for outputs + LoRAs/Checkpoints/Embeddings previews — opt-in, zero impact when disabled), and a real **Restart UI** button.
+> Version **`2026.2.0`** · A personal fork of **[lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) v2.5.5** with a series of quality-of-life features: a **Save Preset** button, **CivitAI Model Settings** integration (checkpoint triggers, consensus settings, save-as-preset), **LoRA trigger words** from local metadata + CivitAI, **Embeddings panel** with bulk-insert, **Wildcards editor**, **Vary-with-aspect-ratio** override, **Custom Resolution** (any ratio + size, snapped to /64), an **🖼️ Asset Browser** (PhotoSwipe-based standalone gallery for outputs + LoRAs/Checkpoints/Embeddings previews — opt-in, zero impact when disabled), **architecture filtering** (auto-hides Flux/SD3/LLMs from dropdowns — SD/SDXL only), and a real **Restart UI** button.
 
 ![Fooocus2025 fork — Models tab showing CivitAI / LoRA / Embeddings / Wildcards accordions and Restart UI, with wildcards in the prompt](docs/screenshots/overview.png)
 
@@ -250,6 +250,29 @@ pause
 ```
 
 Without this loop, the restart button still works — it just becomes a clean exit instead of a restart.
+
+---
+
+### 10. 🧬 Architecture filtering (SD/SDXL only)
+**Where:** Automatic — no UI toggle needed.
+
+**What it does:** Reads safetensors headers at startup (~1 ms per file, no weight loading) and hides incompatible models from **all three dropdowns** (checkpoints, LoRAs, embeddings). Only SD 1.x and SDXL models appear. Flux, SD3, SVD, LLMs, and any other architecture are silently hidden. Console shows a one-line summary: `[arch-filter] Kept 42, hidden 3 incompatible checkpoint(s): flux-dev.safetensors, sd3-medium.safetensors, ...`.
+
+**Detection strategies:**
+- **Checkpoints:** positive-match on `model.diffusion_model.input_blocks.*` (SD/SDXL signature). Everything else is hidden.
+- **LoRAs:** blacklist approach — only blocks Flux LoRAs (`lora_transformer_double*`), SD3 LoRAs (`lora_transformer_joint*`), and full models accidentally placed in the LoRA folder. Keeps kohya, diffusers, LyCORIS, LoHa, LoKr, Pony, and everything else.
+- **Embeddings:** files under 10 MB are always kept (covers all real embeddings). Larger files are checked for full-model signatures and hidden if found.
+
+**Cache:** results are stored in `model_arch_cache.json` (gitignored) keyed by filename + mtime. Delete the file to force a full rescan.
+
+---
+
+### 11. 🖼️ Asset Browser shortcut icons
+**Where:** Next to **Base Model**, **Refiner**, **LoRA**, and **Textual Inversion** labels in the Advanced tab.
+
+**What it does:** Small clickable icons that open the corresponding Asset Browser tab in a new browser tab — `#checkpoints` for Base Model / Refiner, `#loras` for LoRA, `#embeddings` for Textual Inversion. Saves you from hunting for the Asset Browser link when you're already looking at the model selector.
+
+**Requires:** Asset Browser enabled in `config.txt`.
 
 ---
 
