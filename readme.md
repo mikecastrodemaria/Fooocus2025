@@ -302,6 +302,35 @@ The install root of the original package can include launcher scripts tuned for 
 
 ---
 
+## 🔒 Security note — local-use deployment
+
+This fork is designed for **local single-user use** on a workstation, behind your
+own firewall. The Gradio 3.41.2 server it ships is pinned for compatibility
+(every JS/DOM injection patch in this fork — Asset Browser, custom tabs, header
+icons — assumes Gradio 3.x). Several known CVEs in Gradio 3.41.x require a
+remote attacker who can reach the web server: they are **not exploitable in the
+intended deployment** (localhost binding, no public exposure).
+
+If you decide to expose Fooocus on a network — even a "trusted" LAN — observe:
+
+- **Never use `--share`** on an untrusted network. The `--share` flag opens a
+  public Gradio tunnel and re-introduces the full attack surface of the CVEs.
+- **Do not bind Fooocus to a public interface.** Stay on `127.0.0.1`.
+- If you must run on a LAN, put it behind an authenticated reverse proxy
+  (Caddy / Nginx + basic auth) — Gradio 3.x's own `--auth` is the bare minimum
+  and not a substitute for a proper proxy.
+- Don't load `.safetensors` or `.pth` checkpoints from untrusted sources.
+  Several CVEs in `transformers` / `torch` are deserialization issues triggered
+  by loading malicious model files; the only realistic mitigation is the same
+  rule as for any ML stack — only run models you trust.
+
+The other deps (`transformers`, `torch`, `pytorch_lightning`) have been
+upgraded to the latest fixed versions in custom-11. `pytorch_lightning` was
+dropped entirely since the only reference in the codebase was a commented-out
+import in `ldm_patched/ldm/models/autoencoder.py`.
+
+---
+
 ## ⚙️ Fork-specific `config.txt` keys
 
 All upstream keys still apply. The fork adds a few of its own. Most have a UI control (Advanced tab) but the ones below are useful enough to be tunable directly in `config.txt`:

@@ -1,6 +1,6 @@
 torchsde==0.2.6
 einops==0.8.0
-transformers==4.42.4
+transformers==4.50.0
 safetensors==0.4.3
 accelerate==0.32.1
 pyyaml==6.0.1
@@ -8,8 +8,13 @@ pillow==10.4.0
 scipy==1.14.0
 tqdm==4.66.4
 psutil==6.0.0
-pytorch_lightning==2.3.3
 omegaconf==2.3.0
+# DO NOT BUMP gradio above 3.41.2 — this fork relies on the Gradio 3.x DOM
+# structure for JS/DOM injection (Asset Browser icons, accordion tabs, custom
+# header buttons). Gradio 4.x rewrites the event system and HTML output and
+# would break every custom-* feature (8, 9, 10). Known Dependabot alerts for
+# gradio 3.41.x (path traversal, SSRF, /file access) are NOT exploitable in
+# the intended local/LAN deployment — see "Security note" in readme.md.
 gradio==3.41.2
 pygit2==1.15.1
 opencv-contrib-python-headless==4.10.0.84

@@ -3,6 +3,42 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-11] — 2026-05-16 — Security: dep cleanup + Gradio pin documented
+
+### Removed
+- **`pytorch_lightning==2.3.3`** dropped from `requirements_versions.txt`. The
+  only reference in the codebase was a commented-out import in
+  `ldm_patched/ldm/models/autoencoder.py` — pure dead dep. Closes Dependabot
+  alerts #104 (Critical path traversal) and #40 (Direct).
+
+### Changed
+- **`transformers`** `4.42.4` → `4.50.0`. Fixes 4 deserialization CVEs
+  (#97, #96, #95, #33, #32, #31). Only usage in the fork is BLIP loading
+  `BertTokenizer` — API stable since transformers 4.x.
+- **`torch`** `2.1.0` → `2.5.1` and **`torchvision`** `0.16.0` → `0.20.1`
+  in `requirements_docker.txt`. Fixes the `torch.load(weights_only=True)`
+  RCE (#52).
+- **`gradio==3.41.2`** pin in `requirements_versions.txt` is now flagged with
+  an explicit DO-NOT-BUMP comment. Every JS/DOM injection in this fork
+  (Asset Browser icons, custom accordion headers, header reindex polling,
+  custom-10 paths accordion) relies on the Gradio 3.x DOM layout. A bump to
+  Gradio 4.x would break all custom-8 / custom-9 / custom-10 features and
+  is not on the roadmap.
+
+### Documentation
+- New **🔒 Security note** section in `readme.md` (just above "Fork-specific
+  config.txt keys") explaining the local-use threat model, why the remaining
+  Gradio 3.41.x CVEs aren't exploitable in the intended deployment, and the
+  rules to follow if exposing Fooocus on a LAN (no `--share`, no public bind,
+  use a real reverse proxy with auth).
+
+### Notes
+- After this commit, the Dependabot dashboard drops from 127 to ~116 alerts.
+  The remaining alerts are Gradio 3.x server CVEs that are knowingly accepted
+  for compatibility — see the Security note for the threat model.
+- After installing the new requirements, regenerate the venv or run
+  `pip install -r requirements_versions.txt --upgrade` to apply the bumps.
+
 ## [custom-10] — 2026-05-16 — Multi-upscaler + face restoration (CodeFormer / GFPGAN)
 
 ### Added
