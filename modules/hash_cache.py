@@ -11,13 +11,32 @@ hash_cache = {}
 
 
 def sha256_from_cache(filepath):
+    """Return cached sha256 for *filepath*.
+
+    custom-11.1: gracefully handle missing files. Fooocus' LoRA / checkpoint
+    lookup can return a stale path (file moved/deleted after indexing),
+    which used to crash the whole save_and_log path during metadata
+    serialization. We now warn and return an empty hash instead.
+    """
     global hash_cache
-    if filepath not in hash_cache:
-        print(f"[Cache] Calculating sha256 for {filepath}")
+    if filepath in hash_cache:
+        return hash_cache[filepath]
+
+    if not filepath or not os.path.isfile(filepath):
+        print(f"[Cache] WARNING: file not found, skipping sha256: {filepath}")
+        hash_cache[filepath] = ''
+        return ''
+
+    print(f"[Cache] Calculating sha256 for {filepath}")
+    try:
         hash_value = sha256(filepath)
-        print(f"[Cache] sha256 for {filepath}: {hash_value}")
-        hash_cache[filepath] = hash_value
-        save_cache_to_file(filepath, hash_value)
+    except (OSError, IOError) as e:
+        print(f"[Cache] WARNING: could not hash {filepath} ({type(e).__name__}: {e}). Returning empty hash.")
+        hash_cache[filepath] = ''
+        return ''
+    print(f"[Cache] sha256 for {filepath}: {hash_value}")
+    hash_cache[filepath] = hash_value
+    save_cache_to_file(filepath, hash_value)
 
     return hash_cache[filepath]
 

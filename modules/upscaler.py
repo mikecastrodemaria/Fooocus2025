@@ -45,24 +45,54 @@ def _load_state_dict_any(path: str):
 
 @lru_cache(maxsize=4)
 def _load_upscale_model(model_path: str):
-    """Cached loader. Returns a torch.nn.Module ready for upscale."""
+    """Cached loader. Returns a torch.nn.Module ready for upscale.
+
+    Strategy (custom-10.3):
+      1. Try the auto-detector (handles ESRGAN/RealESRGAN/SwinIR/HAT/DAT/...).
+      2. If that fails, fall back to the original Fooocus manual ESRGAN
+         construction with the legacy 'residual_block_*' -> 'RDB*' rename.
+      3. Only raise if BOTH paths fail — saves the day when the bundled
+         loader doesn't recognise a non-standard ESRGAN variant whose
+         keys still parse with a forced ESRGAN constructor.
+    """
     print(f'[Upscaler] Loading upscale model: {model_path}')
     sd = _load_state_dict_any(model_path)
 
-    # Fooocus' bundled upscaler uses an old key naming ("residual_block_*").
-    # Translate it on the fly so we can use the generic loader for it too.
-    if any(k.startswith('residual_block_') for k in sd.keys()):
+    # 1) Manual path when we see the legacy Fooocus key naming. The original
+    #    Fooocus upscaler keys look like 'model.1.sub.N.residual_block_X.convY...'
+    #    — 'residual_block_' is a substring, NOT a prefix. Match accordingly.
+    if any('residual_block_' in k for k in sd.keys()):
         sdo = OrderedDict()
         for k, v in sd.items():
             sdo[k.replace('residual_block_', 'RDB')] = v
-        del sd
         m = ESRGAN(sdo)
-    else:
-        m = auto_load_state_dict(sd)
+        m.cpu(); m.eval()
+        return m
 
-    m.cpu()
-    m.eval()
-    return m
+    # 2) Auto-detector (covers most modern files).
+    try:
+        m = auto_load_state_dict(sd)
+        m.cpu(); m.eval()
+        return m
+    except Exception as e_auto:
+        # 3) Last-resort: force ESRGAN constructor with the legacy rename hack.
+        # This mirrors the pre-custom-10 behaviour and recovers files that the
+        # newer auto-detector chokes on (some community ESRGAN variants).
+        try:
+            sdo = OrderedDict()
+            for k, v in sd.items():
+                sdo[k.replace('residual_block_', 'RDB')] = v
+            m = ESRGAN(sdo)
+            m.cpu(); m.eval()
+            print(f'[Upscaler] auto-detect failed ({type(e_auto).__name__}); legacy ESRGAN fallback succeeded.')
+            return m
+        except Exception as e_manual:
+            # Both paths dead. Raise the original auto-detect error with extra
+            # context so the caller can decide whether to fall back further.
+            raise type(e_auto)(
+                f'{e_auto} | legacy ESRGAN also failed: '
+                f'{type(e_manual).__name__}: {e_manual}'
+            )
 
 
 def perform_upscale(img, model_path: str = None):
@@ -70,8 +100,9 @@ def perform_upscale(img, model_path: str = None):
 
     Args:
         img: HxWxC numpy array (uint8).
-        model_path: absolute path to an upscale model. If None or the file
-            doesn't exist, falls back to the bundled Fooocus ESRGAN.
+        model_path: absolute path to an upscale model. If None, the file is
+            missing, or the file can't be parsed by any known arch, falls
+            back to the bundled Fooocus ESRGAN with a console warning.
 
     Returns:
         Upscaled HxWxC numpy array.
@@ -82,13 +113,38 @@ def perform_upscale(img, model_path: str = None):
 
     use_custom = bool(model_path) and os.path.isfile(model_path)
 
+    active = None
     if use_custom:
-        active = _load_upscale_model(model_path)
-    else:
+        try:
+            active = _load_upscale_model(model_path)
+        except Exception as e:
+            # custom-10.2: graceful fallback. Common cause: a community
+            # checkpoint whose state-dict keys don't match any architecture
+            # the bundled ldm_patched.pfn.model_loading auto-detects
+            # (UnsupportedModel raised). Don't crash the whole generation —
+            # warn loudly and fall back to the Fooocus default.
+            print(f'[Upscaler] WARNING: cannot load {model_path} ({type(e).__name__}: {e}).')
+            print(f'[Upscaler] Falling back to bundled Fooocus default upscaler.')
+
+    if active is None:
         if model is None:
             # Lazily load the bundled default (downloads if missing).
             default_path = downloading_upscale_model()
-            model = _load_upscale_model(default_path)
+            try:
+                model = _load_upscale_model(default_path)
+            except Exception as e_default:
+                # custom-10.3: even the bundled default failed (usually means
+                # the file at path_upscale_models/fooocus_upscaler_s409985e5.bin
+                # was overwritten with a different model by some other tool).
+                # Surface a CLEAR error instead of a cryptic UnsupportedModel.
+                raise RuntimeError(
+                    f'Fooocus default upscaler at {default_path} cannot be '
+                    f'loaded ({type(e_default).__name__}: {e_default}). '
+                    f'Likely the file was replaced with a non-ESRGAN model. '
+                    f'Either delete that file (Fooocus will re-download the '
+                    f'official one on next run) or point path_upscale_models '
+                    f'to a folder that contains the real fooocus_upscaler.bin.'
+                ) from e_default
         active = model
 
     img = core.numpy_to_pytorch(img)

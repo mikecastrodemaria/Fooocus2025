@@ -3,6 +3,93 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-11.1] — 2026-05-16 — Resilient sha256_from_cache (no more crash on missing LoRA/checkpoint)
+
+### Fixed
+- `modules/hash_cache.py::sha256_from_cache` used to call `sha256(filepath)`
+  directly. If the file had been moved/deleted/reorganized after Fooocus
+  indexed it (very common when the user shares `path_loras` with an A1111
+  install that gets reshuffled), `open(filename, "rb")` raised
+  `FileNotFoundError` and **the whole save_and_log path crashed AFTER the
+  image was already saved**, leaving the user with a generated PNG but no
+  metadata, no upscale, no continuation of the pipeline.
+- The cache function now checks `os.path.isfile(filepath)` first; if absent
+  or unreadable, it logs `[Cache] WARNING: file not found, skipping sha256`
+  and caches an empty string. Downstream metadata gets a blank hash for that
+  one file but everything else continues normally — upscale, enhance, save,
+  log.html, all fine.
+
+### Why
+- Defensive metadata writing should never block a successful generation
+  from completing. Image saving + post-processing must be more robust than
+  the hash bookkeeping that decorates them.
+
+## [custom-10.4] — 2026-05-16 — Surface "Upscale Denoising Strength" out of Developer Debug
+
+### Changed
+- The slider previously labelled **"Forced Overwrite of Denoising Strength of
+  Upscale"** in the Developer Debug Mode section is now visible to every user,
+  inside the custom-10 block (Enhance > Upscale or Variation, between the
+  Upscaler Model dropdown and the Face Restoration dropdown). Renamed to a
+  clearer **"🎚 Upscale Denoising Strength"** with a friendly info text.
+- Same Python variable name (`overwrite_upscale_strength`) and same default
+  (`-1` = auto / `0.382`) — no change to `ctrls` or `AsyncTask`. The widget
+  just lives in a more discoverable place.
+
+### Why
+- The "denoising strength" value controls how aggressively the SDXL refinement
+  pass redraws after the ESRGAN upscale. It's a major creative knob (low =
+  preserve detail, high = creative redraw), yet it was buried under
+  "developer debugging" and most users never found it.
+
+## [custom-10.3] — 2026-05-16 — Substring match for residual_block_ + robust upscaler fallbacks
+
+### Critical fix
+- **`residual_block_` detection was wrong.** Original Fooocus keys look like
+  `model.1.sub.N.residual_block_X.convY` — substring, not prefix. The
+  `k.startswith('residual_block_')` check from custom-10 returned False for
+  all keys of the bundled Fooocus default upscaler, sending it to the
+  auto-detector which doesn't recognize that layer naming. Result: even the
+  default upscaler was broken since custom-10. Fixed by switching to
+  `'residual_block_' in k` (substring), mirroring the original `.replace()`
+  call's behaviour.
+
+### Added
+- **Double fallback** in `_load_upscale_model`: legacy `residual_block_*` path
+  first, then auto-detector, then legacy ESRGAN constructor as last resort.
+  Recovers community ESRGAN variants whose keys confuse the auto-detector
+  but still parse with a forced ESRGAN.
+- **Safe-guard** around the bundled-default load: clear `RuntimeError` with
+  actionable message ("file likely replaced — delete it, Fooocus will
+  re-download the official one") instead of the cryptic `UnsupportedModel`.
+
+## [custom-10.2] — 2026-05-16 — UX move + graceful upscaler fallback
+
+### Changed
+- **Moved the 4 custom-10 controls** (Upscaler Model, Face Restoration,
+  Visibility, Apply Face Restoration order) **from the standalone Upscale
+  or Variation tab into the Enhance > Upscale or Variation section**,
+  inserted between "Order of Processing" and "Prompt". The controls are
+  now wrapped in a `gr.Group` whose visibility is bound to
+  `enhance_uov_method` — shown only when the user picks an Upscale mode
+  there (`Upscale (1.5x)` / `Upscale (2x)` / `Upscale (Fast 2x)`).
+- The wiring is unchanged: `apply_upscale()` in `modules/async_worker.py`
+  is the **single shared upscale entry point** for both the standalone
+  Input Image path AND the Enhance pipeline, so these controls govern
+  both paths through one set of widgets. No duplicate UI required.
+
+### Added
+- **Graceful upscaler fallback** in `modules/upscaler.py::perform_upscale`.
+  When a `.pth` / `.safetensors` doesn't match any architecture the bundled
+  loader knows (e.g., a community ESRGAN variant with non-standard layer
+  keys like `4x-ClearRealityV1`), we now log a clear `[Upscaler] WARNING`
+  and fall back to the Fooocus bundled ESRGAN for that run, instead of
+  crashing the whole Enhance/Upscale pipeline with `UnsupportedModel`.
+
+### Removed
+- The custom-10.1 visibility binding on `uov_method` (top tab) was rolled
+  into the move; the standalone tab no longer hosts these controls.
+
 ## [custom-11] — 2026-05-16 — Security: dep cleanup + Gradio pin documented
 
 ### Removed

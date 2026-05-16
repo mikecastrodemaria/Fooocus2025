@@ -222,32 +222,7 @@ with shared.gradio_root:
                             with gr.Column():
                                 uov_method = gr.Radio(label='Upscale or Variation:', choices=flags.uov_list, value=modules.config.default_uov_method)
                                 gr.HTML('<a href="https://github.com/lllyasviel/Fooocus/discussions/390" target="_blank">\U0001F4D4 Documentation</a>')
-                                # === custom-10: Upscaler model + Face restoration controls ===
-                                _uov_models = modules.config.list_upscale_models()
-                                _uov_choices = ['Fooocus Default (ESRGAN)'] + [n for n, _ in _uov_models]
-                                upscaler_model_name = gr.Dropdown(
-                                    label='\U0001F50D Upscaler Model',
-                                    choices=_uov_choices,
-                                    value='Fooocus Default (ESRGAN)',
-                                    info='Detected at startup. ESRGAN/RealESRGAN/SwinIR/HAT/DAT auto-recognized.'
-                                )
-                                face_restore_model = gr.Dropdown(
-                                    label='\U0001F464 Face Restoration',
-                                    choices=['Off', 'CodeFormer', 'GFPGAN v1.4'],
-                                    value='Off',
-                                    info='Auto-downloads on first use (~333-376 MB).'
-                                )
-                                face_restore_visibility = gr.Slider(
-                                    label='Face Restoration Visibility',
-                                    minimum=0.0, maximum=1.0, step=0.05, value=0.8,
-                                    info='0 = no effect; 1 = full restoration. Blended with the source.'
-                                )
-                                face_restore_order = gr.Radio(
-                                    label='Apply Face Restoration',
-                                    choices=['Before upscale', 'After upscale'],
-                                    value='After upscale',
-                                    info='After upscale = A1111 standard (face restore on the high-res image).'
-                                )
+
                     with gr.Tab(label='Image Prompt', id='ip_tab') as ip_tab:
                         with gr.Row():
                             ip_images = []
@@ -427,6 +402,53 @@ with shared.gradio_root:
                                                                         info='Use before to enhance small details and after to enhance large areas.',
                                                                         choices=flags.enhancement_uov_processing_order,
                                                                         value=modules.config.default_enhance_uov_processing_order)
+                                # === custom-10.2: Upscaler model + Face restoration ===
+                                # Wired to the SHARED apply_upscale() in async_worker, so these
+                                # apply to both the Enhance upscale path AND the standalone
+                                # Input Image upscale (which routes through the same function).
+                                # Visibility tied to enhance_uov_method: shown only on Upscale modes.
+                                _uov_models = modules.config.list_upscale_models()
+                                _uov_choices = ['Fooocus Default (ESRGAN)'] + [n for n, _ in _uov_models]
+                                _initial_uov_visible = isinstance(modules.config.default_enhance_uov_method, str) \
+                                                       and modules.config.default_enhance_uov_method.startswith('Upscale')
+                                with gr.Group(visible=_initial_uov_visible) as upscaler_extras_group:
+                                    upscaler_model_name = gr.Dropdown(
+                                        label='\U0001F50D Upscaler Model',
+                                        choices=_uov_choices,
+                                        value='Fooocus Default (ESRGAN)',
+                                        info='Detected at startup. ESRGAN/RealESRGAN/SwinIR/HAT/DAT auto-recognized.'
+                                    )
+                                    # custom-10.4: surfaced from Developer Debug Mode
+                                    overwrite_upscale_strength = gr.Slider(
+                                        label='\U0001F39A Upscale Denoising Strength',
+                                        minimum=-1, maximum=1.0, step=0.001,
+                                        value=modules.config.default_overwrite_upscale,
+                                        info='SDXL refinement pass strength after ESRGAN upscale. -1 = auto (0.382). '
+                                             'Lower = preserve original detail. Higher = more creative redraw. '
+                                             'Ignored on "Upscale (Fast 2x)" which skips the SDXL pass.'
+                                    )
+                                    face_restore_model = gr.Dropdown(
+                                        label='\U0001F464 Face Restoration',
+                                        choices=['Off', 'CodeFormer', 'GFPGAN v1.4'],
+                                        value='Off',
+                                        info='Auto-downloads on first use (~333-376 MB).'
+                                    )
+                                    face_restore_visibility = gr.Slider(
+                                        label='Face Restoration Visibility',
+                                        minimum=0.0, maximum=1.0, step=0.05, value=0.8,
+                                        info='0 = no effect; 1 = full restoration. Blended with the source.'
+                                    )
+                                    face_restore_order = gr.Radio(
+                                        label='Apply Face Restoration',
+                                        choices=['Before upscale', 'After upscale'],
+                                        value='After upscale',
+                                        info='After upscale = A1111 standard (face restore on the high-res image).'
+                                    )
+                                enhance_uov_method.change(
+                                    lambda m: gr.update(visible=(isinstance(m, str) and m.startswith('Upscale'))),
+                                    inputs=enhance_uov_method, outputs=upscaler_extras_group,
+                                    queue=False, show_progress=False
+                                )
                                 enhance_uov_prompt_type = gr.Radio(label='Prompt',
                                                                    info='Choose which prompt to use for Upscale or Variation.',
                                                                    choices=flags.enhancement_uov_prompt_types,
@@ -1420,10 +1442,9 @@ with shared.gradio_root:
                         overwrite_vary_strength = gr.Slider(label='Forced Overwrite of Denoising Strength of "Vary"',
                                                             minimum=-1, maximum=1.0, step=0.001, value=-1,
                                                             info='Set as negative number to disable. For developer debugging.')
-                        overwrite_upscale_strength = gr.Slider(label='Forced Overwrite of Denoising Strength of "Upscale"',
-                                                               minimum=-1, maximum=1.0, step=0.001,
-                                                               value=modules.config.default_overwrite_upscale,
-                                                               info='Set as negative number to disable. For developer debugging.')
+                        # custom-10.4: overwrite_upscale_strength slider moved out of
+                        # Developer Debug to the custom-10 block in Enhance > UOV for
+                        # easier discoverability (see further down in webui.py).
 
                         disable_preview = gr.Checkbox(label='Disable Preview', value=modules.config.default_black_out_nsfw,
                                                       interactive=not modules.config.default_black_out_nsfw,
