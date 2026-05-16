@@ -176,6 +176,14 @@ class AsyncTask:
                     enhance_inpaint_erode_or_dilate,
                     enhance_mask_invert
                 ])
+        # custom-10: upscaler model + face restoration (4 args appended in ctrls).
+        # 'Fooocus Default (ESRGAN)' sentinel => fall back to the bundled model;
+        # the display_name for any real model is converted back to its absolute
+        # path on demand by _resolve_upscale_model_path() defined below.
+        self.upscaler_model_name = args.pop()
+        self.face_restore_model = args.pop()
+        self.face_restore_visibility = float(args.pop())
+        self.face_restore_order = args.pop()
         self.should_enhance = self.enhance_checkbox and (self.enhance_uov_method != disabled.casefold() or len(self.enhance_ctrls) > 0)
         self.images_to_enhance_count = 0
         self.enhance_stats = {}
@@ -222,6 +230,64 @@ def worker():
     from modules.upscaler import perform_upscale
     from modules.flags import Performance
     from modules.meta_parser import get_metadata_parser
+
+    # custom-10: resolve dropdown display_name back to abs path
+    def _resolve_upscale_model_path(display_name):
+        if not display_name or display_name == 'Fooocus Default (ESRGAN)':
+            return None
+        for name, full in modules.config.list_upscale_models():
+            if name == display_name:
+                return full
+        return None
+
+    # custom-10: face restoration helper. Loads the model via the same
+    # auto-detecting loader the upscaler uses (CodeFormer / GFPGAN are
+    # recognized by ldm_patched.pfn.model_loading.load_state_dict).
+    _face_restore_cache = {}
+    def _apply_face_restoration(img, model_name, visibility):
+        if model_name == 'Off' or visibility <= 0.0:
+            return img
+        try:
+            from modules.upscaler import _load_state_dict_any
+            from ldm_patched.pfn.model_loading import load_state_dict as _auto_load
+            import numpy as _np
+            import cv2 as _cv2
+            if model_name == 'CodeFormer':
+                p = modules.config.downloading_codeformer()
+            elif model_name == 'GFPGAN v1.4':
+                p = modules.config.downloading_gfpgan_v14()
+            else:
+                # Treat as a filename inside any face_restore path
+                p = None
+                for n, full in modules.config.list_face_restore_models():
+                    if n == model_name:
+                        p = full; break
+                if p is None:
+                    print(f'[face-restore] unknown model: {model_name} — skipping')
+                    return img
+            if p not in _face_restore_cache:
+                print(f'[face-restore] Loading {model_name} from {p}')
+                sd = _load_state_dict_any(p)
+                m = _auto_load(sd)
+                m.cpu(); m.eval()
+                _face_restore_cache[p] = m
+            m = _face_restore_cache[p]
+            with torch.inference_mode():
+                t = torch.from_numpy(img.astype(_np.float32) / 255.0)
+                t = t.permute(2, 0, 1).unsqueeze(0)  # NCHW
+                out = m(t)
+                if isinstance(out, (list, tuple)):
+                    out = out[0]
+                out = out.clamp(0, 1).squeeze(0).permute(1, 2, 0).cpu().numpy()
+                out = (out * 255.0).round().astype(_np.uint8)
+            if out.shape != img.shape:
+                out = _cv2.resize(out, (img.shape[1], img.shape[0]), interpolation=_cv2.INTER_LANCZOS4)
+            v = float(visibility)
+            blended = (v * out.astype(_np.float32) + (1.0 - v) * img.astype(_np.float32)).round()
+            return _np.clip(blended, 0, 255).astype(_np.uint8)
+        except Exception as e:
+            print(f'[face-restore] failed ({e}) — returning source')
+            return img
 
     pid = os.getpid()
     print(f'Started worker with PID {pid}')
@@ -610,11 +676,25 @@ def worker():
 
     def apply_upscale(async_task, uov_input_image, uov_method, switch, current_progress, advance_progress=False):
         H, W, C = uov_input_image.shape
+        # custom-10: pre-upscale face restoration
+        if getattr(async_task, 'face_restore_model', 'Off') != 'Off' \
+                and getattr(async_task, 'face_restore_order', 'After upscale') == 'Before upscale':
+            progressbar(async_task, current_progress, f'Face restoration ({async_task.face_restore_model}) — pre-upscale ...')
+            uov_input_image = _apply_face_restoration(
+                uov_input_image, async_task.face_restore_model, async_task.face_restore_visibility)
         if advance_progress:
             current_progress += 1
         progressbar(async_task, current_progress, f'Upscaling image from {str((W, H))} ...')
-        uov_input_image = perform_upscale(uov_input_image)
-        print(f'Image upscaled.')
+        # custom-10: resolve selected upscaler model (None → bundled default)
+        _mp = _resolve_upscale_model_path(getattr(async_task, 'upscaler_model_name', None))
+        uov_input_image = perform_upscale(uov_input_image, model_path=_mp)
+        print(f'Image upscaled (model={_mp or "Fooocus default"}).')
+        # custom-10: post-upscale face restoration
+        if getattr(async_task, 'face_restore_model', 'Off') != 'Off' \
+                and getattr(async_task, 'face_restore_order', 'After upscale') == 'After upscale':
+            progressbar(async_task, current_progress, f'Face restoration ({async_task.face_restore_model}) — post-upscale ...')
+            uov_input_image = _apply_face_restoration(
+                uov_input_image, async_task.face_restore_model, async_task.face_restore_visibility)
         if '1.5x' in uov_method:
             f = 1.5
         elif '2x' in uov_method:

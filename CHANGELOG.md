@@ -3,6 +3,35 @@
 This fork is based on [lllyasviel/Fooocus](https://github.com/lllyasviel/Fooocus) **v2.5.5**.
 Only fork-specific changes are listed here — upstream history is available via `git log`.
 
+## [custom-10] — 2026-05-16 — Multi-upscaler + face restoration (CodeFormer / GFPGAN)
+
+### Added
+- **Pluggable upscale models.** `modules/upscaler.py` refactored to use `ldm_patched.pfn.model_loading.load_state_dict()` instead of the hardcoded ESRGAN loader. ESRGAN, RealESRGAN (SRVGG), SwinIR, Swin2SR, HAT, DAT, SCUNet, OmniSR, SwiftSRGAN, SPSR are auto-detected from the state dict — drop a `.pth` / `.safetensors` in any configured folder and it shows up in the dropdown. LRU cache (`maxsize=4`) avoids re-loading 30+ MB per call when the user switches models in a session. `perform_upscale(img)` keeps its legacy signature (None → bundled Fooocus default) for back-compat.
+- **Face restoration pipeline (CodeFormer / GFPGAN v1.4).** New `_apply_face_restoration()` inside `worker()`, blended with a visibility slider (0–1). Same auto-detecting loader handles the face restoration archs (CodeFormer / GFPGAN clean / RestoreFormer all recognized by `model_loading.load_state_dict`). Models auto-download on first use into `path_face_restore_models`.
+- **UI controls in the Upscale or Variation tab** (4 new):
+  - 🔍 **Upscaler Model** dropdown (populated from `list_upscale_models()`)
+  - 👤 **Face Restoration** dropdown (Off / CodeFormer / GFPGAN v1.4)
+  - **Visibility** slider (0.0–1.0, default 0.8)
+  - **Apply Face Restoration** radio (Before / After upscale — After = A1111 default)
+- **A1111-compatible paths.** Six new optional `config.txt` keys lets you point Fooocus at an existing Stable Diffusion WebUI install instead of duplicating models on disk:
+  - `path_esrgan`, `path_realesrgan`, `path_swinir`, `path_dat`
+  - `path_gfpgan`, `path_codeformer`
+  - `path_face_restore_models` (default for auto-downloaded face models)
+- **Accordion "🔍 Upscale & Face Restoration Paths"** in Advanced > Models. Edit the 6 paths directly from the WebUI and Save (writes to `config.txt`). Restart UI to refresh the dropdowns.
+
+### Changed
+- `modules/upscaler.py` — full rewrite (98 lines). Bundled Fooocus upscaler key naming `residual_block_*` is translated to `RDB*` on the fly so the same code path handles it.
+- `modules/async_worker.py::AsyncTask` consumes 4 new args after `enhance_ctrls` (`upscaler_model_name`, `face_restore_model`, `face_restore_visibility`, `face_restore_order`). `apply_upscale()` now resolves the chosen model and wraps the call with optional pre/post face restoration.
+- `modules/config.py` — `+116 lines`: 7 new path declarations (`_opt_path` helper writes empty default to `config_dict` so the serializer doesn't raise `KeyError`), `list_upscale_models()` / `list_face_restore_models()` helpers (dedupe across folders, `[folder] basename` prefix on collision), and two downloaders pulling CodeFormer (~376 MB) and GFPGAN v1.4 (~333 MB) from their official GitHub releases.
+
+### Documentation
+- `readme.md` — extended the Fork-specific `config.txt` keys table with the 7 new keys (`custom-10` row); example fragment shows pointing the three most common folders at an A1111 install.
+
+### Notes
+- The dropdown content is a snapshot taken at UI build time — Restart UI required after dropping new files in any of the configured folders.
+- Empty path = silently ignored (no warning, no crash). Missing folder = silently ignored too.
+- The Fooocus bundled upscaler remains the default; selecting "Fooocus Default (ESRGAN)" in the dropdown is identical to the pre-custom-10 behaviour.
+
 ## [custom-9] — 2026-05-16 — Architecture filtering + Asset Browser shortcut icons
 
 ### Added

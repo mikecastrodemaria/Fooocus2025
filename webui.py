@@ -222,6 +222,32 @@ with shared.gradio_root:
                             with gr.Column():
                                 uov_method = gr.Radio(label='Upscale or Variation:', choices=flags.uov_list, value=modules.config.default_uov_method)
                                 gr.HTML('<a href="https://github.com/lllyasviel/Fooocus/discussions/390" target="_blank">\U0001F4D4 Documentation</a>')
+                                # === custom-10: Upscaler model + Face restoration controls ===
+                                _uov_models = modules.config.list_upscale_models()
+                                _uov_choices = ['Fooocus Default (ESRGAN)'] + [n for n, _ in _uov_models]
+                                upscaler_model_name = gr.Dropdown(
+                                    label='\U0001F50D Upscaler Model',
+                                    choices=_uov_choices,
+                                    value='Fooocus Default (ESRGAN)',
+                                    info='Detected at startup. ESRGAN/RealESRGAN/SwinIR/HAT/DAT auto-recognized.'
+                                )
+                                face_restore_model = gr.Dropdown(
+                                    label='\U0001F464 Face Restoration',
+                                    choices=['Off', 'CodeFormer', 'GFPGAN v1.4'],
+                                    value='Off',
+                                    info='Auto-downloads on first use (~333-376 MB).'
+                                )
+                                face_restore_visibility = gr.Slider(
+                                    label='Face Restoration Visibility',
+                                    minimum=0.0, maximum=1.0, step=0.05, value=0.8,
+                                    info='0 = no effect; 1 = full restoration. Blended with the source.'
+                                )
+                                face_restore_order = gr.Radio(
+                                    label='Apply Face Restoration',
+                                    choices=['Before upscale', 'After upscale'],
+                                    value='After upscale',
+                                    info='After upscale = A1111 standard (face restore on the high-res image).'
+                                )
                     with gr.Tab(label='Image Prompt', id='ip_tab') as ip_tab:
                         with gr.Row():
                             ip_images = []
@@ -1109,6 +1135,64 @@ with shared.gradio_root:
                             '<code>outputs/_previews</code> + <code>outputs/_assets</code> '
                             '(all gitignored).'
                             '</div>')
+
+                # === custom-10: Upscale & Face Restoration paths ================
+                with gr.Accordion(label='\U0001F50D Upscale & Face Restoration Paths',
+                                   open=False, elem_id='upscale_paths_accordion'):
+                    gr.HTML('<div style="font-size:12px;color:#888;margin-bottom:6px;">'
+                            'Optional A1111-compatible folders. Each folder is scanned for upscale / face restoration '
+                            'models in addition to the Fooocus default folders. Leave empty to disable a path. '
+                            '<b>Restart UI</b> after saving for the dropdowns to refresh.'
+                            '</div>')
+                    up_path_esrgan = gr.Textbox(label='ESRGAN folder (path_esrgan)',
+                                                 value=modules.config.path_esrgan,
+                                                 placeholder='e.g. D:\\stable-diffusion-webui\\models\\ESRGAN')
+                    up_path_realesrgan = gr.Textbox(label='RealESRGAN folder (path_realesrgan)',
+                                                     value=modules.config.path_realesrgan,
+                                                     placeholder='e.g. D:\\stable-diffusion-webui\\models\\RealESRGAN')
+                    up_path_swinir = gr.Textbox(label='SwinIR folder (path_swinir)',
+                                                 value=modules.config.path_swinir,
+                                                 placeholder='e.g. D:\\stable-diffusion-webui\\models\\SwinIR')
+                    up_path_dat = gr.Textbox(label='DAT folder (path_dat)',
+                                              value=modules.config.path_dat,
+                                              placeholder='e.g. D:\\stable-diffusion-webui\\models\\DAT')
+                    up_path_gfpgan = gr.Textbox(label='GFPGAN folder (path_gfpgan)',
+                                                 value=modules.config.path_gfpgan,
+                                                 placeholder='e.g. D:\\stable-diffusion-webui\\models\\GFPGAN')
+                    up_path_codeformer = gr.Textbox(label='CodeFormer folder (path_codeformer)',
+                                                     value=modules.config.path_codeformer,
+                                                     placeholder='e.g. D:\\stable-diffusion-webui\\models\\CodeFormer')
+                    up_path_save_btn = gr.Button(value='\U0001F4BE Save paths',
+                                                  variant='primary')
+                    up_path_status = gr.HTML(value='', elem_id='upscale-paths-status')
+
+                    def _save_upscale_paths(p_esrgan, p_realesrgan, p_swinir, p_dat, p_gfpgan, p_codeformer):
+                        try:
+                            import json as _json
+                            cfg_path = modules.config.config_path
+                            try:
+                                with open(cfg_path, 'r', encoding='utf-8') as f:
+                                    cfg = _json.load(f)
+                            except Exception:
+                                cfg = {}
+                            cfg['path_esrgan'] = (p_esrgan or '').strip()
+                            cfg['path_realesrgan'] = (p_realesrgan or '').strip()
+                            cfg['path_swinir'] = (p_swinir or '').strip()
+                            cfg['path_dat'] = (p_dat or '').strip()
+                            cfg['path_gfpgan'] = (p_gfpgan or '').strip()
+                            cfg['path_codeformer'] = (p_codeformer or '').strip()
+                            with open(cfg_path, 'w', encoding='utf-8') as f:
+                                _json.dump(cfg, f, indent=4, ensure_ascii=False)
+                            return gr.update(value='<span style="color:#4ecdc4;">Saved. Restart UI to refresh model dropdowns.</span>')
+                        except Exception as _e:
+                            return gr.update(value=f'<span style="color:#ff6b6b;">Error: {_e}</span>')
+
+                    up_path_save_btn.click(
+                        _save_upscale_paths,
+                        inputs=[up_path_esrgan, up_path_realesrgan, up_path_swinir,
+                                up_path_dat, up_path_gfpgan, up_path_codeformer],
+                        outputs=[up_path_status],
+                        queue=False, show_progress=False)
 
                     def _ab_save_and_status(enabled, thumbs, dzi, index_boot, blur):
                         ok, msg = modules.config.write_asset_browser_settings({
@@ -2402,6 +2486,9 @@ with shared.gradio_root:
                   enhance_input_image, enhance_checkbox, enhance_uov_method, enhance_uov_processing_order,
                   enhance_uov_prompt_type]
         ctrls += enhance_ctrls
+        # custom-10: upscaler model + face restoration controls (appended at end
+        # to preserve all existing arg ordering for the AsyncTask parser).
+        ctrls += [upscaler_model_name, face_restore_model, face_restore_visibility, face_restore_order]
 
         def _looks_like_a1111_meta(text):
             """Detect A1111-style metadata: prompt text followed by a params line

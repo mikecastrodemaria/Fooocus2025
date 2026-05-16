@@ -208,6 +208,104 @@ path_outputs = get_path_output()
 # cache on a different drive (e.g. fast SSD) than the Fooocus install.
 path_civitai_cache = get_dir_or_set_default('path_civitai_cache', './civitai_cache')
 
+# custom-10: Multi-path upscaler & face restoration support (A1111-compatible).
+# `path_upscale_models` (above) stays the primary/default folder. The 6 optional
+# paths below let power users point Fooocus at their existing A1111 install so
+# the same .pth files aren't duplicated on disk. Empty string = path disabled.
+# `path_face_restore_models` is the default folder for CodeFormer/GFPGAN
+# (auto-created); the per-arch overrides take precedence when set.
+def _opt_path(key):
+    """Optional path: read from config_dict, mark as visited, no dir creation, no validation.
+    Ensures the key always exists in config_dict (empty string by default) so the
+    serializer at the end of this module doesn't choke when the user never set it.
+    """
+    if key not in visited_keys:
+        visited_keys.append(key)
+    if key not in always_save_keys:
+        always_save_keys.append(key)
+    v = os.getenv(key)
+    if v is not None:
+        config_dict[key] = v
+    if key not in config_dict:
+        config_dict[key] = ''
+    return (config_dict.get(key) or '').strip()
+
+path_esrgan = _opt_path('path_esrgan')
+path_realesrgan = _opt_path('path_realesrgan')
+path_swinir = _opt_path('path_swinir')
+path_dat = _opt_path('path_dat')
+path_face_restore_models = get_dir_or_set_default('path_face_restore_models', '../models/face_restore_models/')
+path_gfpgan = _opt_path('path_gfpgan')
+path_codeformer = _opt_path('path_codeformer')
+
+
+def _scan_model_dir(dir_path, extensions=('.pth', '.safetensors', '.bin', '.pt', '.ckpt')):
+    """Return abs paths of model files inside dir_path (non-recursive). [] if dir missing."""
+    if not dir_path or not os.path.isdir(dir_path):
+        return []
+    out = []
+    try:
+        for name in os.listdir(dir_path):
+            full = os.path.join(dir_path, name)
+            if os.path.isfile(full) and name.lower().endswith(extensions):
+                out.append(os.path.abspath(full))
+    except OSError:
+        return []
+    return sorted(out)
+
+
+def list_upscale_models():
+    """Aggregate upscale models across all configured folders.
+
+    Returns list of (display_name, abs_path) tuples. Adds a [folder] prefix when
+    the same filename appears in multiple folders, to disambiguate.
+    """
+    folders = [
+        ('upscale_models', path_upscale_models),
+        ('ESRGAN', path_esrgan),
+        ('RealESRGAN', path_realesrgan),
+        ('SwinIR', path_swinir),
+        ('DAT', path_dat),
+    ]
+    by_name = {}
+    for label, folder in folders:
+        for full in _scan_model_dir(folder):
+            base = os.path.basename(full)
+            by_name.setdefault(base, []).append((label, full))
+    out = []
+    for base in sorted(by_name.keys()):
+        entries = by_name[base]
+        if len(entries) == 1:
+            out.append((base, entries[0][1]))
+        else:
+            for label, full in entries:
+                out.append((f'[{label}] {base}', full))
+    return out
+
+
+def list_face_restore_models():
+    """Aggregate CodeFormer / GFPGAN models across configured folders."""
+    folders = [
+        ('face_restore_models', path_face_restore_models),
+        ('GFPGAN', path_gfpgan),
+        ('CodeFormer', path_codeformer),
+    ]
+    by_name = {}
+    for label, folder in folders:
+        for full in _scan_model_dir(folder):
+            base = os.path.basename(full)
+            by_name.setdefault(base, []).append((label, full))
+    out = []
+    for base in sorted(by_name.keys()):
+        entries = by_name[base]
+        if len(entries) == 1:
+            out.append((base, entries[0][1]))
+        else:
+            for label, full in entries:
+                out.append((f'[{label}] {base}', full))
+    return out
+
+
 
 def get_config_item_or_set_default(key, default_value, validator, disable_empty_as_none=False, expected_type=None):
     global config_dict, visited_keys
@@ -1458,6 +1556,29 @@ def downloading_upscale_model():
         file_name='fooocus_upscaler_s409985e5.bin'
     )
     return os.path.join(path_upscale_models, 'fooocus_upscaler_s409985e5.bin')
+
+
+# custom-10: face restoration downloaders (CodeFormer / GFPGAN v1.4).
+# Pulled lazily on first use. Stored in path_face_restore_models so they're
+# discoverable by list_face_restore_models() and the Asset Browser.
+def downloading_codeformer():
+    load_file_from_url(
+        url='https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth',
+        model_dir=path_face_restore_models,
+        file_name='codeformer.pth'
+    )
+    return os.path.join(path_face_restore_models, 'codeformer.pth')
+
+
+def downloading_gfpgan_v14():
+    load_file_from_url(
+        url='https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth',
+        model_dir=path_face_restore_models,
+        file_name='GFPGANv1.4.pth'
+    )
+    return os.path.join(path_face_restore_models, 'GFPGANv1.4.pth')
+
+
 
 def downloading_safety_checker_model():
     load_file_from_url(

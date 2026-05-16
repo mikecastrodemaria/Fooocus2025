@@ -319,6 +319,13 @@ All upstream keys still apply. The fork adds a few of its own. Most have a UI co
 | `asset_browser.dzi_threshold_mp` | `4.0` | 0.5..64.0 | custom-8 | Megapixel threshold for `generate_dzi_tiles="auto"`. |
 | `asset_browser.placeholder_label_max` | `24` | 8..64 | custom-8 | Filename length on placeholder previews before truncation. |
 | `asset_browser.blur_thumbnails` | `false` | bool | custom-8.1 | NSFW privacy default — blur all thumbnails with hover/click reveal. Per-browser override available in the Browser header. |
+| `path_face_restore_models` | `"../models/face_restore_models/"` | path string | custom-10 | Default folder for CodeFormer / GFPGAN models (auto-downloaded here on first use). |
+| `path_esrgan` | `""` | path string (optional) | custom-10 | A1111-compatible: extra folder scanned for ESRGAN-family models. Empty = disabled. |
+| `path_realesrgan` | `""` | path string (optional) | custom-10 | A1111-compatible: extra folder for RealESRGAN models (SRVGG arch). |
+| `path_swinir` | `""` | path string (optional) | custom-10 | A1111-compatible: extra folder for SwinIR / Swin2SR models. |
+| `path_dat` | `""` | path string (optional) | custom-10 | A1111-compatible: extra folder for DAT models. |
+| `path_gfpgan` | `""` | path string (optional) | custom-10 | A1111-compatible: extra folder for GFPGAN models. |
+| `path_codeformer` | `""` | path string (optional) | custom-10 | A1111-compatible: extra folder for CodeFormer models. |
 
 Each value is clamped on save — bad values in `config.txt` fall back to the default rather than crashing.
 
@@ -326,6 +333,9 @@ Example fragment:
 ```json
 {
   "path_civitai_cache": "D:/Caches/civitai",
+  "path_esrgan": "D:/stable-diffusion-webui/models/ESRGAN",
+  "path_realesrgan": "D:/stable-diffusion-webui/models/RealESRGAN",
+  "path_gfpgan": "D:/stable-diffusion-webui/models/GFPGAN",
   "asset_browser": {
     "enabled": true,
     "thumbnail_size": 128,
