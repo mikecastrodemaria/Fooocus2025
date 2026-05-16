@@ -12,6 +12,7 @@ Only fork-specific changes are listed here — upstream history is available via
   alerts #104 (Critical path traversal) and #40 (Direct).
 
 ### Changed
+- **`tokenizers`** `0.19.1` → `0.21.0` (forced by the transformers bump — `transformers 4.50.0` requires `tokenizers>=0.21,<0.22`). Same upstream API for BertTokenizer, no breaking change for BLIP.
 - **`transformers`** `4.42.4` → `4.50.0`. Fixes 4 deserialization CVEs
   (#97, #96, #95, #33, #32, #31). Only usage in the fork is BLIP loading
   `BertTokenizer` — API stable since transformers 4.x.
