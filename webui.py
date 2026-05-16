@@ -1080,9 +1080,13 @@ with shared.gradio_root:
                     with gr.Row():
                         ab_save_btn = gr.Button(value='\U0001F4BE Save settings',
                                                  variant='primary', scale=1)
-                        ab_reindex_btn = gr.Button(value='\U0001F504 Reindex everything now',
+                        ab_reindex_btn = gr.Button(value='\U0001F504 Reindex everything',
                                                     variant='secondary', scale=1,
                                                     elem_id='ab-reindex-btn')
+                        ab_reindex_smart_btn = gr.Button(
+                            value='\U0001F9E0 Reindex missing only',
+                            variant='secondary', scale=1,
+                            elem_id='ab-reindex-smart-btn')
                     ab_status = gr.HTML(value='', elem_id='ab-status')
                     if _ab_cfg.get('enabled'):
                         try:
@@ -1152,8 +1156,23 @@ with shared.gradio_root:
                     # against generation. Client-side polling avoids both
                     # issues and never blocks the queue.
 
+                    def _ab_reindex_smart():
+                        try:
+                            from modules.gallery_writer import reindex_outputs_async
+                            started, msg = reindex_outputs_async(missing_only=True)
+                        except Exception as e:
+                            return gr.update(value=f'<span style="color:#ff6b6b;">Smart reindex failed to start: {e}</span>')
+                        color = '#4ecdc4' if started else '#ffa500'
+                        return gr.update(value=f'<span style="color:{color};">{msg}</span>')
+
                     ab_reindex_btn.click(
                         _ab_reindex_now,
+                        inputs=[],
+                        outputs=[ab_status],
+                        queue=False, show_progress=False)
+
+                    ab_reindex_smart_btn.click(
+                        _ab_reindex_smart,
                         inputs=[],
                         outputs=[ab_status],
                         queue=False, show_progress=False)
@@ -2237,6 +2256,39 @@ with shared.gradio_root:
                              load_parameter_button] + freeu_ctrls + lora_ctrls
 
         if not args_manager.args.disable_preset_selection:
+            def _validate_preset_models(preset_prepared):
+                """Validate that preset models/LoRAs exist locally; fallback to defaults."""
+                # Validate base model
+                base = preset_prepared.get('base_model')
+                if base and base not in modules.config.model_filenames:
+                    print(f'[preset] Base model "{base}" not found locally, falling back to default')
+                    preset_prepared['base_model'] = modules.config.default_model
+
+                # Validate LoRAs
+                loras = preset_prepared.get('default_loras', [])
+                if loras:
+                    validated = []
+                    for lora_entry in loras:
+                        if isinstance(lora_entry, list) and len(lora_entry) >= 2:
+                            enabled, name = lora_entry[0], lora_entry[1]
+                            weight = lora_entry[2] if len(lora_entry) > 2 else 1.0
+                            if name and name != 'None' and name not in modules.config.lora_filenames:
+                                print(f'[preset] LoRA "{name}" not found locally, disabling')
+                                validated.append([False, name, weight])
+                            else:
+                                validated.append(lora_entry)
+                        else:
+                            validated.append(lora_entry)
+                    preset_prepared['default_loras'] = validated
+
+                # Validate refiner
+                refiner = preset_prepared.get('refiner_model')
+                if refiner and refiner != 'None' and refiner not in modules.config.model_filenames:
+                    print(f'[preset] Refiner "{refiner}" not found locally, disabling')
+                    preset_prepared['refiner_model'] = 'None'
+
+                return preset_prepared
+
             def preset_selection_change(preset, is_generating, inpaint_mode):
                 preset_content = modules.config.try_get_preset_content(preset) if preset != 'initial' else {}
                 preset_prepared = modules.meta_parser.parse_meta_from_preset(preset_content)
@@ -2251,6 +2303,9 @@ with shared.gradio_root:
                 preset_prepared['base_model'], preset_prepared['checkpoint_downloads'] = launch.download_models(
                     default_model, previous_default_models, checkpoint_downloads, embeddings_downloads, lora_downloads,
                     vae_downloads)
+
+                # Validate models exist locally after download attempt
+                preset_prepared = _validate_preset_models(preset_prepared)
 
                 if 'prompt' in preset_prepared and preset_prepared.get('prompt') == '':
                     del preset_prepared['prompt']
@@ -2348,10 +2403,32 @@ with shared.gradio_root:
                   enhance_uov_prompt_type]
         ctrls += enhance_ctrls
 
+        def _looks_like_a1111_meta(text):
+            """Detect A1111-style metadata: prompt text followed by a params line
+            containing key: value pairs like 'Steps: 25, CFG scale: 5, ...'"""
+            if not text or len(text) < 20:
+                return False
+            lines = text.strip().split('\n')
+            last = lines[-1].strip()
+            import re as _re
+            pairs = _re.findall(r'\w[\w \-/]+:\s*[^,]+', last)
+            has_steps = 'Steps:' in last
+            has_cfg = 'CFG scale:' in last or 'CFG Scale:' in last
+            return has_steps and has_cfg and len(pairs) >= 3
+
         def parse_meta(raw_prompt_txt, is_generating):
             loaded_json = None
             if is_json(raw_prompt_txt):
                 loaded_json = json.loads(raw_prompt_txt)
+
+            # Detect A1111-style pasted metadata (prompt + params line)
+            if loaded_json is None and _looks_like_a1111_meta(raw_prompt_txt):
+                try:
+                    parser = modules.meta_parser.get_metadata_parser(modules.flags.MetadataScheme.A1111)
+                    loaded_json = parser.to_json(raw_prompt_txt)
+                except Exception as e:
+                    print(f'[parse_meta] A1111 parse failed: {e}')
+                    loaded_json = None
 
             if loaded_json is None:
                 if is_generating:

@@ -199,6 +199,8 @@
   <h1>🖼️ Fooocus2025 — Asset Browser <span class="badge" id="badge-status">M3 · PhotoSwipe lightbox</span></h1>
   <div class="right">
     <div class="toggles" id="header-toggles">
+      <input type="text" id="search-input" placeholder="Search…" title="Filter by filename, trigger words, prompt"
+             style="background:#2a2a2a;color:#e0e0e0;border:1px solid #555;border-radius:4px;padding:4px 8px;font-size:13px;width:180px;margin-right:8px;">
       <button id="btn-blur"        title="Blur all thumbnails (NSFW privacy). Hover or click to reveal individually.">🌫️ Blur</button>
       <button id="btn-show-hidden" title="Reveal hidden days / subfolders (use the eye-slash button on each item to hide it).">👁️ Hidden</button>
     </div>
@@ -730,9 +732,20 @@ function buildModelsTab(kind, opts) {
         if (this.activeSubfolder !== '__all__' && this.activeSubfolder === sf) return true;
         return !State.isHidden(scope, sf);
       };
-      const filtered = (this.activeSubfolder === '__all__'
+      let filtered = (this.activeSubfolder === '__all__'
         ? this.items.filter(it => subfolderVisible(it.subfolder || '.'))
         : this.items.filter(it => (it.subfolder || '.') === this.activeSubfolder));
+      // Search filter — match against filename, trigger_words, prompt, rel_path
+      const q = (document.getElementById('search-input') || {}).value || '';
+      if (q.trim()) {
+        const lq = q.toLowerCase().trim();
+        filtered = filtered.filter(it => {
+          const fields = [it.filename, it.rel_path, it.trigger_words,
+                          it.metadata && it.metadata.prompt,
+                          it.metadata && it.metadata.negative_prompt].filter(Boolean);
+          return fields.some(f => f.toLowerCase().includes(lq));
+        });
+      }
       if (filtered.length === 0) { renderEmpty($main, 'Nothing to show here.'); return; }
 
       // Slides for lightbox — uses preview_full (full-res sidecar copy) and
@@ -835,6 +848,20 @@ document.getElementById('btn-show-hidden').addEventListener('click', () => {
   refreshHeaderToggles();
   _reInitActiveTab();   // re-render the current tab so hidden items come back / disappear
 });
+
+// Search filter — debounced re-render on input
+(function() {
+  const searchEl = document.getElementById('search-input');
+  let timer = null;
+  searchEl.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => _reInitActiveTab(), 200);
+  });
+  // Clear search when switching tabs
+  document.querySelectorAll('#tabs button').forEach(b => {
+    b.addEventListener('click', () => { searchEl.value = ''; });
+  });
+})();
 
 // Delegated click for hide/unhide buttons in the sidebar.
 document.addEventListener('click', (ev) => {

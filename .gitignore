@@ -1,69 +1,105 @@
-__pycache__
+## Python
+__pycache__/
+*.pyc
+*.pyo
+
+## Model weights — all formats
 *.ckpt
 *.safetensors
 *.pth
 *.pt
 *.bin
 *.patch
+*.onnx
 *.backup
 *.corrupted
 *.partial
-*.onnx
-sorted_styles.json
+
+## Models directory (weights, VAEs, LoRAs, embeddings, etc.)
+/models/checkpoints/
+/models/loras/
+/models/embeddings/
+/models/vae/
+/models/vae_approx/
+/models/clip/
+/models/clip_vision//models/controlnet/
+/models/diffusers/
+/models/gligen/
+/models/hypernetworks/
+/models/inpaint/
+/models/prompt_expansion/
+/models/safety_checker/
+/models/sam/
+/models/style_models/
+/models/unet/
+/models/upscale_models/
+
+## Outputs & generated content
+/outputs/
+/log/
+/input/
+/tmp/
+
+## Runtime caches & generated indexes
+/cache/
+/cache.json*
 hash_cache.txt
-/input
-/cache
-/language/default.json
-/test_imgs
+sorted_styles.json
+model_arch_cache.json
+
+## User config (local to each install)
 config.txt
+config.json
 config_modification_tutorial.txt
-user_path_config.txt
-user_path_config-deprecated.txt
+user_path_config.txtuser_path_config-deprecated.txt
+ui-config.json
+/auth.json
+/config_states/
+
+## IDE & OS
+.vscode/
+/.idea/
+.DS_Store
+Thumbs.db
+
+## Environments & deps
+/repositories/
+/fooocus_env/
+/venv/
+/node_modules/
+/package-lock.json
+
+## Legacy / upstream ignores
+/language/default.json
+/test_imgs/
 /modules/*.png
-/repositories
-/fooocus_env
-/venv
-/tmp
-/ui-config.json
-/outputs
-/config.json
-/log
 /webui.settings.bat
-/embeddings
-/styles.csv
-/params.txt
-/styles.csv.bak
 /webui-user.bat
 /webui-user.sh
-/interrogate
+/embeddings/
+/styles.csv
+/styles.csv.bak
+/params.txt
+/interrogate/
 /user.css
-/.idea
 /notification.ogg
 /notification.mp3
-/SwinIR
-/textual_inversion
-.vscode
-/extensions
+/SwinIR/
+/textual_inversion/
+/extensions/
 /test/stdout.txt
 /test/stderr.txt
-/cache.json*
-/config_states/
-/node_modules
-/package-lock.json
 /.coverage*
-/auth.json
-.DS_Store
 
-# Claude Code / local assistant artifacts
+## Claude Code / local assistant artifacts
 .claude/
 CLAUDE.md
 .claude.json
 .claude.json.backup
 
-# Custom fork — runtime caches, local artifacts, internal backups
-/civitai_cache/
+## Custom fork — runtime caches, local artifacts, internal backups
+civitai_cache/
 civitai_api_key.txt
 /_versions/
 memory/
 MEMORY.md
-

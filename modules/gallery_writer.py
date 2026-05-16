@@ -275,6 +275,54 @@ def _parse_a1111_string(raw: str) -> dict:
     return out
 
 
+def _extract_metadata_from_log_html(image_path: str) -> dict:
+    """Fallback: parse metadata from the log.html in the same date directory.
+
+    Fooocus writes a log.html next to images with a table of metadata per image.
+    When the PNG itself has no embedded metadata (e.g. older JPEG outputs, or
+    metadata was stripped), we can still recover prompt/settings from log.html.
+
+    Returns a dict or {} if log.html doesn't exist or image not found in it.
+    """
+    import re
+    date_dir = os.path.dirname(image_path)
+    log_path = os.path.join(date_dir, 'log.html')
+    if not os.path.isfile(log_path):
+        return {}
+    try:
+        filename = os.path.basename(image_path)
+        with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+            html = f.read()
+        # Find the div containing this image
+        div_id = filename.replace('.', '_')
+        # Look for the container by div id or by image filename reference
+        pattern = rf'<div[^>]*id="{re.escape(div_id)}"[^>]*>.*?</div>\s*</div>'
+        match = re.search(pattern, html, re.DOTALL | re.IGNORECASE)
+        if not match:
+            # Try finding by filename in img src
+            pattern2 = rf'<div[^>]*class="image-container"[^>]*>(?:(?!</div>\s*</div>).)*?{re.escape(filename)}.*?</table>'
+            match = re.search(pattern2, html, re.DOTALL | re.IGNORECASE)
+        if not match:
+            return {}
+        block = match.group(0)
+        # Extract label/value pairs from the metadata table
+        row_pattern = r"<td class='label'>(.*?)</td>\s*<td class='value'>(.*?)</td>"
+        rows = re.findall(row_pattern, block, re.DOTALL)
+        if not rows:
+            return {}
+        result = {}
+        for label, value in rows:
+            # Clean HTML tags from value
+            clean_val = re.sub(r'<[^>]+>', ' ', value).strip()
+            clean_val = clean_val.replace(' </br> ', '\n').replace('</br>', '\n')
+            key = label.strip().lower().replace(' ', '_')
+            result[key] = clean_val
+        return result
+    except Exception as e:
+        print(f'[asset-browser] log.html parse failed for {filename}: {e}')
+        return {}
+
+
 def _extract_metadata_from_image_file(image_path: str) -> dict:
     """Read Fooocus metadata from an image file already on disk.
     Used by reindex_outputs() to backfill metadata for images that predate
@@ -367,6 +415,9 @@ def _build_image_entry(image_path: str, metadata=None, task=None) -> dict:
     # Backfill from the image file when no metadata was provided (reindex case).
     if not meta_dict:
         meta_dict = _extract_metadata_from_image_file(image_path)
+    # Second fallback: parse metadata from log.html if image had nothing embedded
+    if not meta_dict:
+        meta_dict = _extract_metadata_from_log_html(image_path)
 
     entry = {
         'id': os.path.splitext(filename)[0],
@@ -487,10 +538,13 @@ def reindex_status() -> dict:
         return dict(_reindex_state)
 
 
-def reindex_outputs_async() -> tuple:
+def reindex_outputs_async(missing_only=False) -> tuple:
     """Spawn the reindex in a daemon thread. Returns immediately with
     (started: bool, message: str). Status pollable via reindex_status().
     Refuses to start if a reindex is already running.
+
+    If missing_only=True, only processes images/days that don't already have
+    a manifest or are missing thumbnails — much faster for incremental updates.
     """
     if not _enabled():
         return False, 'Asset Browser is disabled. Enable it in Advanced first.'
@@ -506,16 +560,45 @@ def reindex_outputs_async() -> tuple:
             'message': 'Starting…',
         })
     threading.Thread(
-        target=_reindex_worker, name='asset-browser-reindex', daemon=True,
+        target=_reindex_worker, args=(missing_only,),
+        name='asset-browser-reindex', daemon=True,
     ).start()
-    return True, 'Reindex started in background — progress below.'
+    mode = 'smart (missing only)' if missing_only else 'full'
+    return True, f'Reindex ({mode}) started in background — progress below.'
 
 
-def _reindex_worker() -> None:
-    """The actual reindex body, running off the main Gradio thread."""
+def _reindex_worker(missing_only=False) -> None:
+    """The actual reindex body, running off the main Gradio thread.
+
+    If missing_only=True, skips date dirs that already have a manifest.json
+    with all images accounted for (no new files since last manifest write).
+    """
     def _set(**kw):
         with _reindex_state_lock:
             _reindex_state.update(kw)
+
+    def _day_needs_reindex(date_dir):
+        """Check if a day directory needs reindexing (missing manifest or new images)."""
+        manifest_path = os.path.join(date_dir, 'manifest.json')
+        if not os.path.isfile(manifest_path):
+            return True
+        try:
+            manifest_mtime = os.path.getmtime(manifest_path)
+            for name in os.listdir(date_dir):
+                lower = name.lower()
+                if name.startswith('.') or name.startswith('_'):
+                    continue
+                if THUMBNAIL_SUFFIX in lower:
+                    continue
+                if not (lower.endswith('.png') or lower.endswith('.jpg')
+                         or lower.endswith('.jpeg') or lower.endswith('.webp')):
+                    continue
+                # If any image is newer than manifest, needs reindex
+                if os.path.getmtime(os.path.join(date_dir, name)) > manifest_mtime:
+                    return True
+            return False
+        except Exception:
+            return True
 
     try:
         out_root = _outputs_root()
@@ -527,15 +610,23 @@ def _reindex_worker() -> None:
 
         total_images = 0
         total_days = 0
+        skipped_days = 0
         all_dates = _scan_existing_dates(out_root)
+        mode_label = 'smart reindex (missing only)' if missing_only else 'reindex'
         _set(phase='outputs', days_total=len(all_dates),
-             message=f'Scanning {len(all_dates)} date dir(s)…')
-        print(f'[asset-browser] reindex starting: {len(all_dates)} date dir(s) under {out_root}')
+             message=f'{mode_label}: scanning {len(all_dates)} date dir(s)…')
+        print(f'[asset-browser] {mode_label} starting: {len(all_dates)} date dir(s) under {out_root}')
 
         with _lock:
             for di, date_string in enumerate(all_dates, start=1):
                 _set(current_date=date_string, days_seen=di)
                 date_dir = os.path.join(out_root, date_string)
+
+                # Smart reindex: skip days that are already up-to-date
+                if missing_only and not _day_needs_reindex(date_dir):
+                    skipped_days += 1
+                    continue
+
                 images = []
                 for name in sorted(os.listdir(date_dir)):
                     lower = name.lower()
@@ -564,7 +655,8 @@ def _reindex_worker() -> None:
                 _set(days_done=total_days, images_total=total_images)
                 print(f'[asset-browser]   [{di}/{len(all_dates)}] {date_string}: {len(images)} image(s) -> manifest + thumbs OK')
             _refresh_days_index()
-            print(f'[asset-browser] reindex outputs done: {total_days}/{len(all_dates)} day(s) had images, {total_images} total')
+            skip_msg = f', skipped {skipped_days} up-to-date' if skipped_days else ''
+            print(f'[asset-browser] {mode_label} outputs done: {total_days}/{len(all_dates)} day(s) had images, {total_images} total{skip_msg}')
 
         # Models phase
         _set(phase='models', current_date=None, message='Scanning models (LoRAs / Checkpoints / Embeddings)…')
@@ -579,8 +671,9 @@ def _reindex_worker() -> None:
         except Exception as me:
             model_summary = f' (model scan failed: {me})'
 
+        skip_part = f' (skipped {skipped_days} up-to-date)' if skipped_days else ''
         final = (f'Reindex complete: {total_days} day(s), '
-                 f'{total_images} image(s).{model_summary}')
+                 f'{total_images} image(s){skip_part}.{model_summary}')
         _set(phase='done', message=final, last_summary=final,
              finished_at=datetime.datetime.now().isoformat(timespec='seconds'))
     except Exception as e:
